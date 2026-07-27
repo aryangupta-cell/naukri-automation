@@ -2,7 +2,14 @@ import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { v4 as uuidv4 } from "uuid";
 import { config } from "./config.js";
-import { readControlState, clearTrigger, setWorkerStatus, readDataRows, writeRowResult, type ControlState } from "./google/jobs.js";
+import {
+  readSheet1ControlState,
+  clearSheet1Trigger,
+  setWorkerStatus,
+  readDataRows,
+  writeRowResult,
+  type Sheet1ControlState,
+} from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
 import { normalizeMobile } from "./domain/mobile.js";
 import type { CandidateResult, RunStage, SheetRow } from "./domain/types.js";
@@ -247,29 +254,25 @@ function startServer(): void {
   });
 }
 
-async function runOnce(control: ControlState): Promise<void> {
+async function runOnce(control: Sheet1ControlState): Promise<void> {
   const runId = uuidv4();
   currentRunId = runId;
   currentStage = "TRIGGER_CLAIMED";
   const logger = new RunLogger(runId);
 
-  await clearTrigger();
+  await clearSheet1Trigger();
   await setWorkerStatus(`Running ${runId}`);
-  await logger.event("TRIGGER_CLAIMED", "Worker claimed run (web human-in-the-loop mode).");
+  await logger.event(
+    "TRIGGER_CLAIMED",
+    `Worker claimed run (web human-in-the-loop mode), rows ${control.startRow}-${control.endRow}.`,
+  );
 
   const cache = new Map<string, CandidateResult>();
   const counts: Record<string, number> = {};
   let processed = 0;
 
   try {
-    const allRows = await readDataRows();
-    const rows = allRows.slice(0, control.maxRows);
-    if (allRows.length > rows.length) {
-      await logger.event(
-        "PROCESSING_ROW",
-        `Capping this run to the first ${rows.length} of ${allRows.length} rows per "Maximum rows per run".`,
-      );
-    }
+    const rows = await readDataRows(control.startRow, control.endRow);
 
     for (const row of rows) {
       if (stop.isStopRequested()) {
@@ -339,11 +342,8 @@ async function runOnce(control: ControlState): Promise<void> {
 
 async function mainLoop(): Promise<void> {
   console.log("Naukri automation - WEB human-in-the-loop mode");
-  console.log(`  Control tab: "${config.controlTabName}"`);
-  console.log(`  Data tab:    "${config.dataTabName}"`);
-  if (config.dataTabName.toLowerCase() === "sheet1") {
-    console.log(`  WARNING: targeting "Sheet1" directly - this is the production tab, not a test tab.`);
-  }
+  console.log(`  Data tab: "${config.dataTabName}"`);
+  console.log(`  Trigger:  ${config.dataTabName}!P1 (checkbox), Q1 (start row), R1 (end row, inclusive)`);
 
   startServer();
   await setWorkerStatus("READY");
@@ -355,7 +355,7 @@ async function mainLoop(): Promise<void> {
 
   for (;;) {
     try {
-      const state = await readControlState();
+      const state = await readSheet1ControlState();
       if (state.triggered) {
         await runOnce(state);
       }

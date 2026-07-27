@@ -2,7 +2,14 @@ import { fileURLToPath } from "node:url";
 import { v4 as uuidv4 } from "uuid";
 import type { Page } from "playwright";
 import { config } from "./config.js";
-import { readControlState, clearTrigger, setWorkerStatus, readDataRows, writeRowResult, type ControlState } from "./google/jobs.js";
+import {
+  readSheet1ControlState,
+  clearSheet1Trigger,
+  setWorkerStatus,
+  readDataRows,
+  writeRowResult,
+  type Sheet1ControlState,
+} from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
 import { normalizeMobile } from "./domain/mobile.js";
 import type { CandidateResult, RunStage, SheetRow } from "./domain/types.js";
@@ -69,15 +76,15 @@ export async function processCandidate(
   return { status: "Completed", modified: timeline.modified, active: timeline.active };
 }
 
-async function runOnce(control: ControlState): Promise<void> {
+async function runOnce(control: Sheet1ControlState): Promise<void> {
   const runId = uuidv4();
   currentRunId = runId;
   currentStage = "TRIGGER_CLAIMED";
   const logger = new RunLogger(runId);
 
-  await clearTrigger();
+  await clearSheet1Trigger();
   await setWorkerStatus(`Running ${runId}`);
-  await logger.event("TRIGGER_CLAIMED", "Worker claimed run.");
+  await logger.event("TRIGGER_CLAIMED", `Worker claimed run, rows ${control.startRow}-${control.endRow}.`);
 
   let browser: NaukriBrowser | null = null;
   const cache = new Map<string, CandidateResult>();
@@ -96,17 +103,7 @@ async function runOnce(control: ControlState): Promise<void> {
       return;
     }
 
-    const allRows = await readDataRows();
-    // B4 "Maximum rows per run" is respected as a safety cap on this batch;
-    // eligibility itself follows the spec's "recheck every valid row" rule
-    // rather than skipping previously-processed rows.
-    const rows = allRows.slice(0, control.maxRows);
-    if (allRows.length > rows.length) {
-      await logger.event(
-        "PROCESSING_ROW",
-        `Capping this run to the first ${rows.length} of ${allRows.length} rows per "Maximum rows per run".`,
-      );
-    }
+    const rows = await readDataRows(control.startRow, control.endRow);
     const resetHandler = new ResetSubuserHandler();
 
     for (const row of rows) {
@@ -176,13 +173,9 @@ async function runOnce(control: ControlState): Promise<void> {
 
 async function mainLoop(): Promise<void> {
   console.log(`Naukri automation agent starting.`);
-  console.log(`  Control tab: "${config.controlTabName}"`);
-  console.log(`  Data tab:    "${config.dataTabName}"`);
-  if (config.dataTabName.toLowerCase() === "sheet1") {
-    console.log(`  WARNING: targeting "Sheet1" directly - this is the production tab, not a test tab.`);
-  }
+  console.log(`  Data tab: "${config.dataTabName}"`);
   console.log("  WARNING: this fully-automated path is currently blocked - Naukri does not");
-  console.log('  recognize a Playwright-controlled session as logged in. Use "npm run agent:manual" instead.');
+  console.log('  recognize a Playwright-controlled session as logged in. Use "npm run agent:web" instead.');
 
   await setWorkerStatus("READY");
   startHeartbeatTicker(
@@ -193,7 +186,7 @@ async function mainLoop(): Promise<void> {
 
   for (;;) {
     try {
-      const state = await readControlState();
+      const state = await readSheet1ControlState();
       if (state.triggered) {
         await runOnce(state);
       }

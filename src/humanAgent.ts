@@ -2,7 +2,14 @@ import { fileURLToPath } from "node:url";
 import readline from "node:readline/promises";
 import { v4 as uuidv4 } from "uuid";
 import { config } from "./config.js";
-import { readControlState, clearTrigger, setWorkerStatus, readDataRows, writeRowResult, type ControlState } from "./google/jobs.js";
+import {
+  readSheet1ControlState,
+  clearSheet1Trigger,
+  setWorkerStatus,
+  readDataRows,
+  writeRowResult,
+  type Sheet1ControlState,
+} from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
 import { normalizeMobile } from "./domain/mobile.js";
 import type { CandidateResult, RunStage, SheetRow } from "./domain/types.js";
@@ -71,29 +78,25 @@ async function promptForResult(row: SheetRow, digits10: string): Promise<Candida
   }
 }
 
-async function runOnce(control: ControlState): Promise<void> {
+async function runOnce(control: Sheet1ControlState): Promise<void> {
   const runId = uuidv4();
   currentRunId = runId;
   currentStage = "TRIGGER_CLAIMED";
   const logger = new RunLogger(runId);
 
-  await clearTrigger();
+  await clearSheet1Trigger();
   await setWorkerStatus(`Running ${runId}`);
-  await logger.event("TRIGGER_CLAIMED", "Worker claimed run (human-in-the-loop mode).");
+  await logger.event(
+    "TRIGGER_CLAIMED",
+    `Worker claimed run (human-in-the-loop mode), rows ${control.startRow}-${control.endRow}.`,
+  );
 
   const cache = new Map<string, CandidateResult>();
   const counts: Record<string, number> = {};
   let processed = 0;
 
   try {
-    const allRows = await readDataRows();
-    const rows = allRows.slice(0, control.maxRows);
-    if (allRows.length > rows.length) {
-      await logger.event(
-        "PROCESSING_ROW",
-        `Capping this run to the first ${rows.length} of ${allRows.length} rows per "Maximum rows per run".`,
-      );
-    }
+    const rows = await readDataRows(control.startRow, control.endRow);
 
     console.log("");
     console.log(`=== Run ${runId}: ${rows.length} row(s) to process ===`);
@@ -166,11 +169,8 @@ async function runOnce(control: ControlState): Promise<void> {
 
 async function mainLoop(): Promise<void> {
   console.log("Naukri automation - HUMAN-IN-THE-LOOP mode");
-  console.log(`  Control tab: "${config.controlTabName}"`);
-  console.log(`  Data tab:    "${config.dataTabName}"`);
-  if (config.dataTabName.toLowerCase() === "sheet1") {
-    console.log(`  WARNING: targeting "Sheet1" directly - this is the production tab, not a test tab.`);
-  }
+  console.log(`  Data tab: "${config.dataTabName}"`);
+  console.log(`  Trigger:  ${config.dataTabName}!P1 (checkbox), Q1 (start row), R1 (end row, inclusive)`);
   console.log("  You'll be prompted to search each candidate yourself in Resdex and report the result.");
 
   await setWorkerStatus("READY");
@@ -182,7 +182,7 @@ async function mainLoop(): Promise<void> {
 
   for (;;) {
     try {
-      const state = await readControlState();
+      const state = await readSheet1ControlState();
       if (state.triggered) {
         await runOnce(state);
       }

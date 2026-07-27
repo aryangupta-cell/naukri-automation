@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`Data tab: "${config.dataTabName}"`);
-  const rows = await readDataRows();
+  const rows = await readDataRows(2, 2000);
   const row = rows.find((r) => normalizeMobile(r.mobileRaw).digits10 === target.digits10);
   if (!row) {
     console.error(`No row in "${config.dataTabName}" has mobile number ${maskMobile(target.digits10)}.`);

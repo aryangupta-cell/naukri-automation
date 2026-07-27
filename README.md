@@ -1,10 +1,10 @@
 # Naukri Automation — Local Worker (Phase 1: local laptop testing)
 
-A Node.js + TypeScript worker that watches the **Automation Control** tab of a
-Google Sheet, and when triggered, looks up each candidate's mobile number in
-Naukri Resdex and writes back their Status/Modified/Active info. This phase
-runs entirely on your local Windows laptop — no Mac agent, no cloud hosting,
-no Apps Script.
+A Node.js + TypeScript worker that watches a trigger checkbox on the
+`Sheet1` data tab of a Google Sheet, and when ticked, looks up each
+candidate's mobile number in Naukri Resdex and writes back their
+Status/Modified/Active info. This phase runs entirely on your local
+Windows laptop — no Mac agent, no cloud hosting, no Apps Script.
 
 ## IMPORTANT: current supported path is the browser extension (`npm run agent:web` + `extension/`)
 
@@ -48,38 +48,33 @@ Sheet-side automation but asks you to search and report each result by hand.
 ## What this targets
 
 - Spreadsheet: `Naukari Automation` (ID `1KJOTaAyWy5k5ioRvMEf3wmPW82Z40H7U5qE_5QNCII4`)
-- Data tab: **`Sheet1_Test`** by default (configurable via `TEST_TAB_NAME`) — columns `Mobile Number | Name | Status | Modified | Active`
-- Control tab: `Automation Control` (real, pre-existing tab — not the hidden `_Automation_Control` sheet from the spec PDF)
+- Data tab: **`Sheet1`** (the real production tab — configurable via `TEST_TAB_NAME` in `.env`, e.g. set it back to `Sheet1_Test` for testing) — columns `Mobile Number | Name | Status | Modified | Active`, plus trigger cells `P1 | Q1 | R1`
 - Log tab: `Execution Log`
+- `Automation Control!B5` — still written for dashboard visibility (Worker status), but no longer read to decide anything
 
-The worker never writes to `Sheet1` unless you explicitly set `TEST_TAB_NAME=Sheet1`.
+## How the trigger works (on the data tab itself, not Automation Control)
 
-## How the live Automation Control tab actually works
+Originally the trigger lived on a separate "Automation Control" tab (checkbox
+in B3, row cap in B4). That's been replaced with a trigger directly on the
+data tab, so there's one place to look instead of two:
 
-This tab was already built (for an earlier, abandoned cloud/Vercel worker
-attempt) with real formulas, which this worker's protocol matches:
+- **P1** — checkbox. Tick it to request a run.
+- **Q1** — start row (inclusive), e.g. `2`.
+- **R1** — end row (inclusive), e.g. `60`. The worker processes exactly rows Q1 through R1, no more, no less — it does not auto-cap or auto-expand.
+- **`Automation Control!B5`** ("Worker status") — still written directly by this worker for visibility: `READY` when idle, `Running <runId>...` while active, `Completed <runId>: ...` / `Failed <runId>: ...` / `Cancelled <runId>: ...` when a run ends.
+- **`Automation Control!E4:E10`** ("LIVE RUN STATUS") — still spreadsheet formulas reading `Execution Log`; the worker only appends log rows, unchanged from before.
 
-- **B3** — checkbox trigger. Tick it to request a run.
-- **B4** — "Maximum rows per run", used here as a safety cap on how many rows one run processes.
-- **B5** — "Worker status", written directly by this worker: `READY` when idle, `Running <runId>...` while active, `Completed <runId>: ...` / `Failed <runId>: ...` / `Cancelled <runId>: ...` when a run ends.
-- **E4:E10** ("LIVE RUN STATUS") — all spreadsheet formulas that read the `Execution Log` tab. The worker never writes these cells directly; it only appends rows to `Execution Log` with the right `Stage`/`Type` values and the dashboard recomputes itself.
-- **B17:B21** ("LIVE QUEUE" counters) — `COUNTIF` formulas looking for the literal strings `Success`, `No Match`, `Manual Review` in Column C.
+**Known limitation carried over:** this worker writes the spec PDF's status
+vocabulary to Column C (`Completed`, `Not Found`, `Multiple Matches`,
+`Manual Intervention`, etc.), not the words `Automation Control!B17:B21`'s
+`COUNTIF` tiles expect (`Success`/`No Match`/`Manual Review`) — those tiles
+will stay at 0 even while rows process correctly.
 
-**Known limitation:** per your instruction, this worker writes the spec
-PDF's original status vocabulary to Column C (`Completed`, `Not Found`,
-`Multiple Matches`, `Manual Intervention`, etc.) rather than the words those
-`COUNTIF` formulas expect. That means the **Success / No Match / Manual
-Review tiles (B18/B19/B21) will stay at 0** even while the worker is
-correctly processing rows — only the blank-vs-non-blank "Queued" counter
-(B20) will move. If you'd like those tiles to work, say the word and I'll
-either change the status strings the worker writes or update the `COUNTIF`
-formulas to match the PDF vocabulary.
-
-**Known gap:** the live Automation Control tab has no "Stop Requested"
-cell (the PDF proposed one in its own hidden sheet, but this tab doesn't
-have it). For this local phase, stop a run with **Ctrl+C** in the terminal
-running `npm run agent` — it finishes the current candidate, marks the run
-`Cancelled`, and returns to `READY`. A second Ctrl+C force-exits.
+**Stopping a run:** there's no "Stop Requested" cell for this either.
+Stop a run with **Ctrl+C** in the terminal running `npm run agent:web` (or
+use the extension panel's "Stop run" button) — it finishes the current
+candidate, marks the run `Cancelled`, and returns to `READY`. A second
+Ctrl+C force-exits the terminal.
 
 ## Prerequisites
 
@@ -89,27 +84,26 @@ running `npm run agent` — it finishes the current candidate, marks the run
 - **Share the Google Sheet with the service account as Editor**: open the
   Sheet's Share dialog and add `drt-migration@key-nebula-488407-v8.iam.gserviceaccount.com`
   as Editor. Without this, every API call fails with `403 permission denied`.
-- A `Sheet1_Test` tab that copies `Sheet1`'s structure (`Mobile Number | Name | Status | Modified | Active`).
+- `Sheet1!P1` (checkbox), `Q1` (start row), `R1` (end row) already set up as the trigger.
 
 ## Setup
 
 ```powershell
 cd "C:\Users\user\Claude Dashboard\naukri-automation"
 npm install
-npm run install:browsers   # downloads the Chromium build Playwright needs
 copy .env.example .env
 ```
 
 Edit `.env`:
 - `SPREADSHEET_ID` — already filled in for you.
-- `TEST_TAB_NAME` — leave as `Sheet1_Test` for now.
+- `TEST_TAB_NAME` — set to `Sheet1` for production, or `Sheet1_Test` to test safely first.
 - `GOOGLE_APPLICATION_CREDENTIALS` — path to your service-account JSON.
 
 ## Daily use (after one-time setup below)
 
 1. Double-click **`Start Naukri Worker.bat`** in this folder. Keep the window it opens visible/open.
 2. Make sure the browser extension is loaded (one-time setup, see below) and a `resdex.naukri.com` tab is open — the panel shows top-right.
-3. Tick **B3** in the Automation Control tab.
+3. On `Sheet1`, set **Q1** (start row) and **R1** (end row), then tick **P1** to trigger.
 
 That's it — no typed commands. `Start Naukri Worker.bat` just runs `npm run agent:web` for you.
 
@@ -121,7 +115,7 @@ That's it — no typed commands. `Start Naukri Worker.bat` just runs `npm run ag
 4. Double-click **`First-Time Setup.bat`** — installs dependencies, creates `.env`, and opens Notepad so you can fill in the path to that service-account file.
 5. In that computer's own regular Chrome, log into Naukri Recruiter once, normally — this is a manual, per-machine, per-account step that can't be skipped or shared.
 6. Load the extension (see "Load the browser extension" below).
-7. From now on: double-click `Start Naukri Worker.bat`, tick B3.
+7. From now on: double-click `Start Naukri Worker.bat`, set Q1/R1, tick P1.
 
 ## Step-by-step rollout (manual/CLI version, for reference or troubleshooting)
 
@@ -150,10 +144,11 @@ talk to.
 3. Click **Load unpacked**, select the `extension/` folder in this repo.
 4. Open any `resdex.naukri.com` page and **refresh it** (content scripts
    only attach to pages loaded *after* the extension is installed).
-5. A small panel appears top-right. Tick **B3** in Automation Control — the
-   panel picks up the run, and for most rows it searches, extracts, and
-   submits automatically with no clicking needed. Rows it can't classify
-   confidently show manual buttons in the same panel.
+5. A small panel appears top-right. Set **Q1**/**R1** (start/end row) on
+   `Sheet1` and tick **P1** — the panel picks up the run, and for most rows
+   it searches, extracts, and submits automatically with no clicking
+   needed. Rows it can't classify confidently show manual buttons in the
+   same panel.
 
 ### 3b. Alternative: plain browser tab, no extension
 Open `http://localhost:4545` directly instead of installing the extension —

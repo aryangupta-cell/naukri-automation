@@ -5,42 +5,52 @@ import { appendRow, getRange, setCell, setRow } from "./sheets.js";
 
 /** Automation Control cell map (fixed layout of the live "Automation Control" tab). */
 const CONTROL_CELLS = {
-  trigger: "B3", // checkbox
-  maxRows: "B4",
   workerStatus: "B5",
 } as const;
 
-export interface ControlState {
+/**
+ * Trigger cells live on the data tab itself (moved here from Automation
+ * Control's B3/B4 checkbox+cap): P1 checkbox, Q1 start row, R1 end row
+ * (inclusive). Automation Control's B5 "Worker status" is still written for
+ * dashboard visibility, but no longer read to decide anything.
+ */
+const SHEET1_TRIGGER_CELLS = {
+  trigger: "P1",
+  startRow: "Q1",
+  endRow: "R1",
+} as const;
+
+export interface Sheet1ControlState {
   triggered: boolean;
-  maxRows: number;
-  workerStatus: string;
+  startRow: number;
+  endRow: number;
 }
 
-export async function readControlState(): Promise<ControlState> {
-  const values = await getRange(config.controlTabName, "A3:B5");
-  const triggered = Boolean(values[0]?.[1]);
-  const maxRows = Number(values[1]?.[1]) || 10;
-  const workerStatus = String(values[2]?.[1] ?? "");
-  return { triggered, maxRows, workerStatus };
+export async function readSheet1ControlState(): Promise<Sheet1ControlState> {
+  const values = await getRange(config.dataTabName, "P1:R1");
+  const triggered = Boolean(values[0]?.[0]);
+  const startRow = Number(values[0]?.[1]) || 2;
+  const endRow = Number(values[0]?.[2]) || startRow;
+  return { triggered, startRow, endRow };
 }
 
-export async function clearTrigger(): Promise<void> {
-  await setCell(config.controlTabName, CONTROL_CELLS.trigger, false);
+export async function clearSheet1Trigger(): Promise<void> {
+  await setCell(config.dataTabName, SHEET1_TRIGGER_CELLS.trigger, false);
 }
 
 export async function setWorkerStatus(text: string): Promise<void> {
   await setCell(config.controlTabName, CONTROL_CELLS.workerStatus, text);
 }
 
-/** Reads all data rows (mobile, name, status) from row 2 to the last populated row of Column A. */
-export async function readDataRows(): Promise<SheetRow[]> {
-  const values = await getRange(config.dataTabName, "A2:C");
+/** Reads data rows (mobile, name, status) for the inclusive [startRow, endRow] range. */
+export async function readDataRows(startRow: number, endRow: number): Promise<SheetRow[]> {
+  const values = await getRange(config.dataTabName, `A${startRow}:C${endRow}`);
   const rows: SheetRow[] = [];
   values.forEach((row, i) => {
     const mobileRaw = row[0];
     if (mobileRaw === undefined || mobileRaw === null || String(mobileRaw).trim() === "") return;
     rows.push({
-      rowNumber: i + 2,
+      rowNumber: startRow + i,
       mobileRaw: String(mobileRaw),
       name: String(row[1] ?? ""),
       status: String(row[2] ?? ""),
