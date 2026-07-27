@@ -4,8 +4,8 @@
   const KEYWORDS_SELECTOR = 'input[name="ezKeywordsAny"]';
   const SEARCH_BUTTON_SELECTOR = "#adv-search-btn";
 
-  let lastMobile = null;
-  let autoAttemptedMobile = null;
+  let lastKey = null;
+  let autoAttemptedKey = null;
 
   const root = document.createElement("div");
   root.id = "naukri-automation-panel";
@@ -48,9 +48,10 @@
     document.getElementById("nap-toggle").textContent = minimized ? "+" : "_";
   });
 
+  let lastValue = null;
   document.getElementById("nap-copy").addEventListener("click", async () => {
-    if (lastMobile) {
-      await navigator.clipboard.writeText(lastMobile);
+    if (lastValue) {
+      await navigator.clipboard.writeText(lastValue);
     }
   });
 
@@ -152,7 +153,7 @@
     return null;
   }
 
-  async function autoSearch(mobile) {
+  async function autoSearch(value) {
     const onSearchPage = window.location.href.includes("activeTab=advSrch");
     let keywordsInput = document.querySelector(KEYWORDS_SELECTOR);
 
@@ -181,7 +182,7 @@
     setStatus("Searching...");
     await clearAllKeywordChips();
     await sleep(200);
-    setReactInputValue(keywordsInput, mobile);
+    setReactInputValue(keywordsInput, value);
     await sleep(300);
 
     // This field is a chip/tag autocomplete (role="combobox") - typing alone
@@ -260,27 +261,31 @@
     const cardEl = document.getElementById("nap-card");
 
     if (state.pending) {
+      const key = `${state.pending.rowNumber}:${state.pending.channel}:${state.pending.value}`;
       idleEl.style.display = "none";
       cardEl.style.display = "block";
-      if (state.pending.mobile !== lastMobile) {
-        document.getElementById("nap-row").textContent = `Row ${state.pending.rowNumber}: ${state.pending.name}`;
-        document.getElementById("nap-mobile").textContent = state.pending.mobile;
-        lastMobile = state.pending.mobile;
+      if (key !== lastKey) {
+        document.getElementById("nap-row").textContent =
+          `Row ${state.pending.rowNumber}: ${state.pending.name} (${state.pending.channel})`;
+        document.getElementById("nap-mobile").textContent = state.pending.value;
+        lastValue = state.pending.value;
+        lastKey = key;
         setStatus("");
       }
-      if (autoAttemptedMobile !== state.pending.mobile) {
-        autoAttemptedMobile = state.pending.mobile;
-        autoSearch(state.pending.mobile);
+      if (autoAttemptedKey !== key) {
+        autoAttemptedKey = key;
+        autoSearch(state.pending.value);
       }
     } else {
       cardEl.style.display = "none";
-      lastMobile = null;
-      autoAttemptedMobile = null;
+      lastKey = null;
+      lastValue = null;
+      autoAttemptedKey = null;
       idleEl.style.display = "block";
       idleEl.textContent = state.idle
         ? state.lastRunSummary
           ? `Last run: ${state.lastRunSummary}`
-          : "Waiting for a run to be triggered (tick B3)..."
+          : "Waiting for a run to be triggered (tick Q1)..."
         : "Run in progress, waiting for the next row...";
     }
   }

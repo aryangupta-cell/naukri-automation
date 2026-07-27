@@ -7,12 +7,12 @@ import {
   clearSheet1Trigger,
   setWorkerStatus,
   readDataRows,
-  writeRowResult,
+  writeChannelResult,
   type Sheet1ControlState,
 } from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
 import { normalizeMobile } from "./domain/mobile.js";
-import type { CandidateResult, RunStage, SheetRow } from "./domain/types.js";
+import type { CandidateResult, RunStage, SearchChannel, SheetRow } from "./domain/types.js";
 import { maskMobile } from "./utils/mask.js";
 import { sleep } from "./utils/sleep.js";
 import { resolveWithCache } from "./utils/cache.js";
@@ -23,6 +23,9 @@ import { installStopHandler, tally, summarize, finishRun, startHeartbeatTicker }
  * prompt. Same automated protocol as humanAgent.ts (Sheet trigger, claim,
  * Execution Log, row read/write, dedupe cache) - only the "ask a person for
  * the Resdex result" step changes, from readline to a browser page.
+ *
+ * Each row is looked up twice: once by phone (columns D:F), once by email
+ * (columns G:I), in that order, before moving to the next row.
  */
 
 const PORT = Number(process.env.WEB_PORT) || 4545;
@@ -35,7 +38,8 @@ interface PendingPrompt {
   runId: string;
   rowNumber: number;
   name: string;
-  mobile: string;
+  value: string;
+  channel: SearchChannel;
 }
 interface PendingState extends PendingPrompt {
   resolve: (result: CandidateResult) => void;
@@ -44,16 +48,16 @@ interface PendingState extends PendingPrompt {
 let pending: PendingState | null = null;
 let lastRunSummary: string | null = null;
 
-function waitForHuman(runId: string, row: SheetRow, digits10: string): Promise<CandidateResult> {
+function waitForHuman(runId: string, row: SheetRow, value: string, channel: SearchChannel): Promise<CandidateResult> {
   return new Promise((resolve) => {
-    pending = { runId, rowNumber: row.rowNumber, name: row.name, mobile: digits10, resolve };
+    pending = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve };
   });
 }
 
 function currentStateJson(): string {
   const p = pending;
   return JSON.stringify({
-    pending: p ? { rowNumber: p.rowNumber, name: p.name, mobile: p.mobile } : null,
+    pending: p ? { rowNumber: p.rowNumber, name: p.name, value: p.value, channel: p.channel } : null,
     idle: currentRunId === "idle",
     lastRunSummary,
   });
@@ -83,13 +87,13 @@ const PAGE_HTML = `<!doctype html>
 </head>
 <body>
 <h1>Naukri Automation - Candidate Lookup</h1>
-<div id="idle">Waiting for a run to be triggered (tick B3 in Automation Control)...</div>
+<div id="idle">Waiting for a run to be triggered (tick Q1 on Sheet1)...</div>
 <div id="done"></div>
 <div id="card">
   <button class="stop" onclick="submitResult('Stopped')">Stop run</button>
-  <div class="row">Row <span id="rowNumber"></span>: <span id="name"></span></div>
+  <div class="row">Row <span id="rowNumber"></span>: <span id="name"></span> (<span id="channel"></span>)</div>
   <div class="row mobile" id="mobile"></div>
-  <p>Search this number in Resdex &gt; Search Resumes in your own browser, then report the result:</p>
+  <p>Search this in Resdex &gt; Search Resumes in your own browser, then report the result:</p>
   <button class="primary" onclick="showCompleted()">Completed</button>
   <button onclick="submitResult('Not Found')">Not Found</button>
   <button onclick="submitResult('Multiple Matches')">Multiple Matches</button>
@@ -147,11 +151,12 @@ async function poll() {
     idleEl.style.display = 'none';
     doneEl.style.display = 'none';
     cardEl.classList.add('show');
-    if (state.pending.mobile !== lastMobile) {
+    if (state.pending.value !== lastMobile) {
       document.getElementById('rowNumber').textContent = state.pending.rowNumber;
       document.getElementById('name').textContent = state.pending.name;
-      document.getElementById('mobile').textContent = state.pending.mobile;
-      lastMobile = state.pending.mobile;
+      document.getElementById('mobile').textContent = state.pending.value;
+      document.getElementById('channel').textContent = state.pending.channel;
+      lastMobile = state.pending.value;
     }
   } else {
     cardEl.classList.remove('show');
@@ -267,56 +272,83 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
     `Worker claimed run (web human-in-the-loop mode), rows ${control.startRow}-${control.endRow}.`,
   );
 
-  const cache = new Map<string, CandidateResult>();
+  const phoneCache = new Map<string, CandidateResult>();
+  const emailCache = new Map<string, CandidateResult>();
   const counts: Record<string, number> = {};
   let processed = 0;
 
   try {
     const rows = await readDataRows(control.startRow, control.endRow);
 
-    for (const row of rows) {
+    rowLoop: for (const row of rows) {
       if (stop.isStopRequested()) {
         await logger.event("STOPPED", `Stop requested; halted before row ${row.rowNumber}.`, { level: "WARN" });
         break;
       }
 
       currentStage = "PROCESSING_ROW";
-      const started = Date.now();
-      await writeRowResult(row.rowNumber, { status: "Processing" });
 
-      const normalized = normalizeMobile(row.mobileRaw);
-      if (!normalized.valid || !normalized.digits10) {
-        const result: CandidateResult = { status: "Invalid Mobile" };
-        await writeRowResult(row.rowNumber, result);
-        await logger.event("PROCESSING_ROW", `Invalid mobile (${normalized.reason}).`, {
-          level: "WARN",
-          candidateRow: row.rowNumber,
-          candidateName: row.name,
-        });
+      // Phone lookup (columns D:F) - only if a mobile number is present.
+      if (row.mobileRaw.trim() !== "") {
+        await writeChannelResult(row.rowNumber, "phone", { status: "Processing" });
+        const normalized = normalizeMobile(row.mobileRaw);
+
+        if (!normalized.valid || !normalized.digits10) {
+          const result: CandidateResult = { status: "Invalid Mobile" };
+          await writeChannelResult(row.rowNumber, "phone", result);
+          await logger.event("PROCESSING_ROW", `Invalid mobile (${normalized.reason}).`, {
+            level: "WARN",
+            candidateRow: row.rowNumber,
+            candidateName: row.name,
+          });
+          tally(counts, result.status);
+          processed++;
+        } else {
+          const digits10 = normalized.digits10;
+          const { value: result, fromCache } = await resolveWithCache(phoneCache, digits10, (d) =>
+            waitForHuman(runId, row, d, "phone"),
+          );
+
+          if (result.status === "Stopped") {
+            await writeChannelResult(row.rowNumber, "phone", result);
+            await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (phone).`, { level: "WARN" });
+            break rowLoop;
+          }
+
+          await writeChannelResult(row.rowNumber, "phone", result);
+          tally(counts, result.status);
+          processed++;
+          await logger.event(
+            "PROCESSING_ROW",
+            `Row ${row.rowNumber} phone (${maskMobile(digits10)}) -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+            { candidateRow: row.rowNumber, candidateName: row.name },
+          );
+        }
+      }
+
+      // Email lookup (columns G:I) - only if an email is present.
+      if (row.email.trim() !== "") {
+        await writeChannelResult(row.rowNumber, "email", { status: "Processing" });
+        const emailKey = row.email.toLowerCase();
+        const { value: result, fromCache } = await resolveWithCache(emailCache, emailKey, () =>
+          waitForHuman(runId, row, row.email, "email"),
+        );
+
+        if (result.status === "Stopped") {
+          await writeChannelResult(row.rowNumber, "email", result);
+          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (email).`, { level: "WARN" });
+          break rowLoop;
+        }
+
+        await writeChannelResult(row.rowNumber, "email", result);
         tally(counts, result.status);
         processed++;
-        continue;
+        await logger.event(
+          "PROCESSING_ROW",
+          `Row ${row.rowNumber} email -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+          { candidateRow: row.rowNumber, candidateName: row.name },
+        );
       }
-
-      const digits10 = normalized.digits10;
-      const { value: result, fromCache } = await resolveWithCache(cache, digits10, (d) => waitForHuman(runId, row, d));
-
-      if (result.status === "Stopped") {
-        await writeRowResult(row.rowNumber, result);
-        await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber}.`, { level: "WARN" });
-        break;
-      }
-
-      await writeRowResult(row.rowNumber, result);
-      tally(counts, result.status);
-      processed++;
-
-      const elapsed = (Date.now() - started) / 1000;
-      await logger.event(
-        "PROCESSING_ROW",
-        `Row ${row.rowNumber} (${maskMobile(digits10)}) -> ${result.status}${fromCache ? " (cached)" : ""}.`,
-        { candidateRow: row.rowNumber, candidateName: row.name, elapsedSeconds: elapsed },
-      );
     }
 
     const summary = summarize(processed, counts);
@@ -343,7 +375,7 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 async function mainLoop(): Promise<void> {
   console.log("Naukri automation - WEB human-in-the-loop mode");
   console.log(`  Data tab: "${config.dataTabName}"`);
-  console.log(`  Trigger:  ${config.dataTabName}!P1 (checkbox), Q1 (start row), R1 (end row, inclusive)`);
+  console.log(`  Trigger:  ${config.dataTabName}!Q1 (checkbox), R1 (start row), S1 (end row, inclusive)`);
 
   startServer();
   await setWorkerStatus("READY");

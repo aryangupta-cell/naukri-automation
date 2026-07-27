@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { RESULT_TREATMENT } from "../domain/statuses.js";
-import type { CandidateResult, LogEntry, SheetRow } from "../domain/types.js";
+import type { CandidateResult, LogEntry, SearchChannel, SheetRow } from "../domain/types.js";
 import { appendRow, getRange, setCell, setRow } from "./sheets.js";
 
 /** Automation Control cell map (fixed layout of the live "Automation Control" tab). */
@@ -9,16 +9,21 @@ const CONTROL_CELLS = {
 } as const;
 
 /**
- * Trigger cells live on the data tab itself (moved here from Automation
- * Control's B3/B4 checkbox+cap): P1 checkbox, Q1 start row, R1 end row
- * (inclusive). Automation Control's B5 "Worker status" is still written for
- * dashboard visibility, but no longer read to decide anything.
+ * Trigger cells live on the data tab itself: Q1 checkbox, R1 start row, S1
+ * end row (inclusive). Automation Control's B5 "Worker status" is still
+ * written for dashboard visibility, but no longer read to decide anything.
+ *
+ * Data columns: A Mobile Number, B Email, C Name, D:F Phone No -
+ * Status/Modified/Active, G:I Email - Status/Modified/Active.
  */
 const SHEET1_TRIGGER_CELLS = {
-  trigger: "P1",
-  startRow: "Q1",
-  endRow: "R1",
+  trigger: "Q1",
+  startRow: "R1",
+  endRow: "S1",
 } as const;
+
+const PHONE_RESULT_COLUMNS = { status: "D", firstCol: "D", lastCol: "F" } as const;
+const EMAIL_RESULT_COLUMNS = { status: "G", firstCol: "G", lastCol: "I" } as const;
 
 export interface Sheet1ControlState {
   triggered: boolean;
@@ -27,7 +32,7 @@ export interface Sheet1ControlState {
 }
 
 export async function readSheet1ControlState(): Promise<Sheet1ControlState> {
-  const values = await getRange(config.dataTabName, "P1:R1");
+  const values = await getRange(config.dataTabName, "Q1:S1");
   const triggered = Boolean(values[0]?.[0]);
   const startRow = Number(values[0]?.[1]) || 2;
   const endRow = Number(values[0]?.[2]) || startRow;
@@ -42,33 +47,37 @@ export async function setWorkerStatus(text: string): Promise<void> {
   await setCell(config.controlTabName, CONTROL_CELLS.workerStatus, text);
 }
 
-/** Reads data rows (mobile, name, status) for the inclusive [startRow, endRow] range. */
+/** Reads data rows (mobile, email, name) for the inclusive [startRow, endRow] range. */
 export async function readDataRows(startRow: number, endRow: number): Promise<SheetRow[]> {
   const values = await getRange(config.dataTabName, `A${startRow}:C${endRow}`);
   const rows: SheetRow[] = [];
   values.forEach((row, i) => {
     const mobileRaw = row[0];
-    if (mobileRaw === undefined || mobileRaw === null || String(mobileRaw).trim() === "") return;
+    const email = row[1];
+    const hasMobile = mobileRaw !== undefined && mobileRaw !== null && String(mobileRaw).trim() !== "";
+    const hasEmail = email !== undefined && email !== null && String(email).trim() !== "";
+    if (!hasMobile && !hasEmail) return;
     rows.push({
       rowNumber: startRow + i,
-      mobileRaw: String(mobileRaw),
-      name: String(row[1] ?? ""),
-      status: String(row[2] ?? ""),
+      mobileRaw: hasMobile ? String(mobileRaw) : "",
+      email: hasEmail ? String(email).trim() : "",
+      name: String(row[2] ?? ""),
     });
   });
   return rows;
 }
 
-/** Writes a row's Status/Modified/Active per the D/E treatment rules (spec 7.2). */
-export async function writeRowResult(rowNumber: number, result: CandidateResult): Promise<void> {
+/** Writes a row's phone-search result to D:F, or the email-search result to G:I, per the D/E treatment rules (spec 7.2). */
+export async function writeChannelResult(rowNumber: number, channel: SearchChannel, result: CandidateResult): Promise<void> {
+  const cols = channel === "phone" ? PHONE_RESULT_COLUMNS : EMAIL_RESULT_COLUMNS;
   const treatment = RESULT_TREATMENT[result.status];
   if (treatment === "preserve") {
-    await setCell(config.dataTabName, `C${rowNumber}`, result.status);
+    await setCell(config.dataTabName, `${cols.status}${rowNumber}`, result.status);
     return;
   }
   const modified = treatment === "overwrite" ? result.modified ?? "" : "";
   const active = treatment === "overwrite" ? result.active ?? "" : "";
-  await setRow(config.dataTabName, `C${rowNumber}:E${rowNumber}`, [result.status, modified, active]);
+  await setRow(config.dataTabName, `${cols.firstCol}${rowNumber}:${cols.lastCol}${rowNumber}`, [result.status, modified, active]);
 }
 
 function formatTimestamp(date: Date): string {

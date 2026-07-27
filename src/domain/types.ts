@@ -4,9 +4,12 @@ export interface SheetRow {
   /** 1-indexed row number in the data tab (row 1 is the header). */
   rowNumber: number;
   mobileRaw: string;
+  email: string;
   name: string;
-  status: string;
 }
+
+/** Which contact channel a search/result is for - phone columns D:F, email columns G:I. */
+export type SearchChannel = "phone" | "email";
 
 export interface NormalizedMobile {
   valid: boolean;

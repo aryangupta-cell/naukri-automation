@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { readDataRows, writeRowResult } from "../src/google/jobs.js";
+import { readDataRows, writeChannelResult } from "../src/google/jobs.js";
 import { normalizeMobile } from "../src/domain/mobile.js";
 import { launchNaukriBrowser } from "../src/naukri/browser.js";
 import { ensureLoggedIn } from "../src/naukri/login.js";
@@ -48,10 +48,10 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    await writeRowResult(row.rowNumber, { status: "Processing" });
+    await writeChannelResult(row.rowNumber, "phone", { status: "Processing" });
     const resetHandler = new ResetSubuserHandler();
     const result = await processCandidate(browser.page, target.digits10, resetHandler, logger, row);
-    await writeRowResult(row.rowNumber, result);
+    await writeChannelResult(row.rowNumber, "phone", result);
 
     console.log("Result:", result);
   } finally {

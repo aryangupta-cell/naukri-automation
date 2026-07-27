@@ -7,7 +7,7 @@ import {
   clearSheet1Trigger,
   setWorkerStatus,
   readDataRows,
-  writeRowResult,
+  writeChannelResult,
   type Sheet1ControlState,
 } from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
@@ -114,12 +114,12 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 
       currentStage = "PROCESSING_ROW";
       const started = Date.now();
-      await writeRowResult(row.rowNumber, { status: "Processing" });
+      await writeChannelResult(row.rowNumber, "phone", { status: "Processing" });
 
       const normalized = normalizeMobile(row.mobileRaw);
       if (!normalized.valid || !normalized.digits10) {
         const result: CandidateResult = { status: "Invalid Mobile" };
-        await writeRowResult(row.rowNumber, result);
+        await writeChannelResult(row.rowNumber, "phone", result);
         await logger.event("PROCESSING_ROW", `Invalid mobile (${normalized.reason}).`, {
           level: "WARN",
           candidateRow: row.rowNumber,
@@ -135,7 +135,7 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
         processCandidate(page, d, resetHandler, logger, row),
       );
 
-      await writeRowResult(row.rowNumber, result);
+      await writeChannelResult(row.rowNumber, "phone", result);
       tally(counts, result.status);
       processed++;
 

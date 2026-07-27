@@ -7,12 +7,12 @@ import {
   clearSheet1Trigger,
   setWorkerStatus,
   readDataRows,
-  writeRowResult,
+  writeChannelResult,
   type Sheet1ControlState,
 } from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
 import { normalizeMobile } from "./domain/mobile.js";
-import type { CandidateResult, RunStage, SheetRow } from "./domain/types.js";
+import type { CandidateResult, RunStage, SearchChannel, SheetRow } from "./domain/types.js";
 import type { RowStatus } from "./domain/statuses.js";
 import { maskMobile } from "./utils/mask.js";
 import { sleep } from "./utils/sleep.js";
@@ -43,12 +43,12 @@ const STATUS_MENU: Array<{ key: string; status: RowStatus }> = [
   { key: "5", status: "Failed" },
 ];
 
-async function promptForResult(row: SheetRow, digits10: string): Promise<CandidateResult> {
+async function promptForResult(row: SheetRow, value: string, channel: SearchChannel): Promise<CandidateResult> {
   console.log("");
-  // Shown in full deliberately - you need to type this exact number into Resdex.
-  // (Execution Log / other console lines still mask it - see logger.ts.)
-  console.log(`Row ${row.rowNumber}: ${row.name} - ${digits10}`);
-  console.log("  Search this number in Resdex > Search Resumes in your own browser, then report the result.");
+  // Shown in full deliberately - you need to type this exact value into Resdex.
+  // (Execution Log / other console lines still mask phone values - see logger.ts.)
+  console.log(`Row ${row.rowNumber}: ${row.name} - ${value} (${channel})`);
+  console.log("  Search this in Resdex > Search Resumes in your own browser, then report the result.");
   console.log("  [1] Completed   [2] Not Found   [3] Multiple Matches   [4] Manual Intervention   [5] Failed   [s] Stop this run");
 
   for (;;) {
@@ -91,7 +91,8 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
     `Worker claimed run (human-in-the-loop mode), rows ${control.startRow}-${control.endRow}.`,
   );
 
-  const cache = new Map<string, CandidateResult>();
+  const phoneCache = new Map<string, CandidateResult>();
+  const emailCache = new Map<string, CandidateResult>();
   const counts: Record<string, number> = {};
   let processed = 0;
 
@@ -101,51 +102,77 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
     console.log("");
     console.log(`=== Run ${runId}: ${rows.length} row(s) to process ===`);
 
-    for (const row of rows) {
+    rowLoop: for (const row of rows) {
       if (stop.isStopRequested()) {
         await logger.event("STOPPED", `Stop requested; halted before row ${row.rowNumber}.`, { level: "WARN" });
         break;
       }
 
       currentStage = "PROCESSING_ROW";
-      const started = Date.now();
-      await writeRowResult(row.rowNumber, { status: "Processing" });
 
-      const normalized = normalizeMobile(row.mobileRaw);
-      if (!normalized.valid || !normalized.digits10) {
-        const result: CandidateResult = { status: "Invalid Mobile" };
-        await writeRowResult(row.rowNumber, result);
-        await logger.event("PROCESSING_ROW", `Invalid mobile (${normalized.reason}).`, {
-          level: "WARN",
-          candidateRow: row.rowNumber,
-          candidateName: row.name,
-        });
+      if (row.mobileRaw.trim() !== "") {
+        await writeChannelResult(row.rowNumber, "phone", { status: "Processing" });
+        const normalized = normalizeMobile(row.mobileRaw);
+
+        if (!normalized.valid || !normalized.digits10) {
+          const result: CandidateResult = { status: "Invalid Mobile" };
+          await writeChannelResult(row.rowNumber, "phone", result);
+          await logger.event("PROCESSING_ROW", `Invalid mobile (${normalized.reason}).`, {
+            level: "WARN",
+            candidateRow: row.rowNumber,
+            candidateName: row.name,
+          });
+          tally(counts, result.status);
+          processed++;
+        } else {
+          const digits10 = normalized.digits10;
+          const { value: result, fromCache } = await resolveWithCache(phoneCache, digits10, (d) =>
+            promptForResult(row, d, "phone"),
+          );
+          if (fromCache) {
+            console.log(`  (Same phone number already looked up this run - reusing result: ${result.status})`);
+          }
+          if (result.status === "Stopped") {
+            await writeChannelResult(row.rowNumber, "phone", result);
+            await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (phone).`, { level: "WARN" });
+            break rowLoop;
+          }
+
+          await writeChannelResult(row.rowNumber, "phone", result);
+          tally(counts, result.status);
+          processed++;
+          await logger.event(
+            "PROCESSING_ROW",
+            `Row ${row.rowNumber} phone (${maskMobile(digits10)}) -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+            { candidateRow: row.rowNumber, candidateName: row.name },
+          );
+        }
+      }
+
+      if (row.email.trim() !== "") {
+        await writeChannelResult(row.rowNumber, "email", { status: "Processing" });
+        const emailKey = row.email.toLowerCase();
+        const { value: result, fromCache } = await resolveWithCache(emailCache, emailKey, () =>
+          promptForResult(row, row.email, "email"),
+        );
+        if (fromCache) {
+          console.log(`  (Same email already looked up this run - reusing result: ${result.status})`);
+        }
+        if (result.status === "Stopped") {
+          await writeChannelResult(row.rowNumber, "email", result);
+          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (email).`, { level: "WARN" });
+          break rowLoop;
+        }
+
+        await writeChannelResult(row.rowNumber, "email", result);
         tally(counts, result.status);
         processed++;
-        continue;
+        await logger.event(
+          "PROCESSING_ROW",
+          `Row ${row.rowNumber} email -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+          { candidateRow: row.rowNumber, candidateName: row.name },
+        );
       }
-
-      const digits10 = normalized.digits10;
-      const { value: result, fromCache } = await resolveWithCache(cache, digits10, (d) => promptForResult(row, d));
-      if (fromCache) {
-        console.log(`  (Same mobile number already looked up this run - reusing result: ${result.status})`);
-      }
-      if (result.status === "Stopped") {
-        await writeRowResult(row.rowNumber, result);
-        await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber}.`, { level: "WARN" });
-        break;
-      }
-
-      await writeRowResult(row.rowNumber, result);
-      tally(counts, result.status);
-      processed++;
-
-      const elapsed = (Date.now() - started) / 1000;
-      await logger.event(
-        "PROCESSING_ROW",
-        `Row ${row.rowNumber} (${maskMobile(digits10)}) -> ${result.status}${fromCache ? " (cached)" : ""}.`,
-        { candidateRow: row.rowNumber, candidateName: row.name, elapsedSeconds: elapsed },
-      );
     }
 
     const summary = summarize(processed, counts);
@@ -170,7 +197,7 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 async function mainLoop(): Promise<void> {
   console.log("Naukri automation - HUMAN-IN-THE-LOOP mode");
   console.log(`  Data tab: "${config.dataTabName}"`);
-  console.log(`  Trigger:  ${config.dataTabName}!P1 (checkbox), Q1 (start row), R1 (end row, inclusive)`);
+  console.log(`  Trigger:  ${config.dataTabName}!Q1 (checkbox), R1 (start row), S1 (end row, inclusive)`);
   console.log("  You'll be prompted to search each candidate yourself in Resdex and report the result.");
 
   await setWorkerStatus("READY");
