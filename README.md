@@ -48,7 +48,11 @@ Sheet-side automation but asks you to search and report each result by hand.
 ## What this targets
 
 - Spreadsheet: `Naukari Automation` (ID `1KJOTaAyWy5k5ioRvMEf3wmPW82Z40H7U5qE_5QNCII4`)
-- Data tab: **`Sheet1`** (the real production tab — configurable via `TEST_TAB_NAME` in `.env`, e.g. set it back to `Sheet1_Test` for testing) — columns `Mobile Number | Name | Status | Modified | Active`, plus trigger cells `P1 | Q1 | R1`
+- Data tab: **`Sheet1`** (the real production tab — configurable via `TEST_TAB_NAME` in `.env`, e.g. set it back to `Sheet1_Test` for testing) — columns:
+  - `A` Mobile Number, `B` Email, `C` Name
+  - `D:F` Phone No - Status / Modified / Active
+  - `G:I` Email - Status / Modified / Active
+  - `Q1:S1` trigger cells (checkbox / start row / end row)
 - Log tab: `Execution Log`
 - `Automation Control!B5` — still written for dashboard visibility (Worker status), but no longer read to decide anything
 
@@ -58,17 +62,22 @@ Originally the trigger lived on a separate "Automation Control" tab (checkbox
 in B3, row cap in B4). That's been replaced with a trigger directly on the
 data tab, so there's one place to look instead of two:
 
-- **P1** — checkbox. Tick it to request a run.
-- **Q1** — start row (inclusive), e.g. `2`.
-- **R1** — end row (inclusive), e.g. `60`. The worker processes exactly rows Q1 through R1, no more, no less — it does not auto-cap or auto-expand.
+- **Q1** — checkbox. Tick it to request a run.
+- **R1** — start row (inclusive), e.g. `2`.
+- **S1** — end row (inclusive), e.g. `60`. The worker processes exactly rows R1 through S1, no more, no less — it does not auto-cap or auto-expand.
 - **`Automation Control!B5`** ("Worker status") — still written directly by this worker for visibility: `READY` when idle, `Running <runId>...` while active, `Completed <runId>: ...` / `Failed <runId>: ...` / `Cancelled <runId>: ...` when a run ends.
 - **`Automation Control!E4:E10`** ("LIVE RUN STATUS") — still spreadsheet formulas reading `Execution Log`; the worker only appends log rows, unchanged from before.
 
+Each row is looked up **twice**: once by phone (written to D:F), once by
+email (written to G:I), in that order, before moving to the next row.
+Either can be blank in a given row and is simply skipped for that channel.
+
 **Known limitation carried over:** this worker writes the spec PDF's status
-vocabulary to Column C (`Completed`, `Not Found`, `Multiple Matches`,
-`Manual Intervention`, etc.), not the words `Automation Control!B17:B21`'s
-`COUNTIF` tiles expect (`Success`/`No Match`/`Manual Review`) — those tiles
-will stay at 0 even while rows process correctly.
+vocabulary (`Completed`, `Not Found`, `Multiple Matches`, `Manual
+Intervention`, etc.) to the Status columns, not the words
+`Automation Control!B17:B21`'s `COUNTIF` tiles expect
+(`Success`/`No Match`/`Manual Review`) — those tiles will stay at 0 even
+while rows process correctly.
 
 **Stopping a run:** there's no "Stop Requested" cell for this either.
 Stop a run with **Ctrl+C** in the terminal running `npm run agent:web` (or
@@ -84,7 +93,7 @@ Ctrl+C force-exits the terminal.
 - **Share the Google Sheet with the service account as Editor**: open the
   Sheet's Share dialog and add `drt-migration@key-nebula-488407-v8.iam.gserviceaccount.com`
   as Editor. Without this, every API call fails with `403 permission denied`.
-- `Sheet1!P1` (checkbox), `Q1` (start row), `R1` (end row) already set up as the trigger.
+- `Sheet1!Q1` (checkbox), `R1` (start row), `S1` (end row) already set up as the trigger, and columns A:I laid out as above.
 
 ## Setup
 
@@ -103,7 +112,7 @@ Edit `.env`:
 
 1. Double-click **`Start Naukri Worker.bat`** in this folder. Keep the window it opens visible/open.
 2. Make sure the browser extension is loaded (one-time setup, see below) and a `resdex.naukri.com` tab is open — the panel shows top-right.
-3. On `Sheet1`, set **Q1** (start row) and **R1** (end row), then tick **P1** to trigger.
+3. On `Sheet1`, set **R1** (start row) and **S1** (end row), then tick **Q1** to trigger.
 
 That's it — no typed commands. `Start Naukri Worker.bat` just runs `npm run agent:web` for you.
 
@@ -115,7 +124,7 @@ That's it — no typed commands. `Start Naukri Worker.bat` just runs `npm run ag
 4. Double-click **`First-Time Setup.bat`** — installs dependencies, creates `.env`, and opens Notepad so you can fill in the path to that service-account file.
 5. In that computer's own regular Chrome, log into Naukri Recruiter once, normally — this is a manual, per-machine, per-account step that can't be skipped or shared.
 6. Load the extension (see "Load the browser extension" below).
-7. From now on: double-click `Start Naukri Worker.bat`, set Q1/R1, tick P1.
+7. From now on: double-click `Start Naukri Worker.bat`, set R1/S1, tick Q1.
 
 ## Step-by-step rollout (manual/CLI version, for reference or troubleshooting)
 
@@ -144,8 +153,8 @@ talk to.
 3. Click **Load unpacked**, select the `extension/` folder in this repo.
 4. Open any `resdex.naukri.com` page and **refresh it** (content scripts
    only attach to pages loaded *after* the extension is installed).
-5. A small panel appears top-right. Set **Q1**/**R1** (start/end row) on
-   `Sheet1` and tick **P1** — the panel picks up the run, and for most rows
+5. A small panel appears top-right. Set **R1**/**S1** (start/end row) on
+   `Sheet1` and tick **Q1** — the panel picks up the run, and for most rows
    it searches, extracts, and submits automatically with no clicking
    needed. Rows it can't classify confidently show manual buttons in the
    same panel.
