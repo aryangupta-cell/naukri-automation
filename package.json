@@ -1,0 +1,36 @@
+{
+  "name": "naukri-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Sheet-triggered Naukri Recruiter/Resdex last-activity checker",
+  "scripts": {
+    "setup": "npm install && npm run install:browsers",
+    "install:browsers": "playwright install chromium",
+    "discover": "tsx scripts/run-discovery.ts",
+    "agent": "tsx src/agent.ts",
+    "agent:manual": "tsx src/humanAgent.ts",
+    "agent:web": "tsx src/webAgent.ts",
+    "run-once": "tsx scripts/run-once.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src tests scripts --ext .ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "playwright": "^1.47.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/uuid": "^9.0.8",
+    "@typescript-eslint/eslint-plugin": "^7.16.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "eslint": "^8.57.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3",
+    "vitest": "^2.0.3"
+  }
+}

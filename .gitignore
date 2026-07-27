@@ -1,0 +1,24 @@
+# Secrets
+.env
+service-account.json
+service_account.json
+*.credentials.json
+
+# Playwright persistent browser profile (contains the live Naukri session)
+.data/
+
+# Playwright artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+screenshots/
+
+# Node
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

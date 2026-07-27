@@ -1,0 +1,97 @@
+#naukri-automation-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 300px;
+  background: #ffffff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  z-index: 2147483647;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+
+#nap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #1a73e8;
+  color: white;
+  padding: 6px 10px;
+  border-radius: 8px 8px 0 0;
+  font-weight: bold;
+  cursor: default;
+}
+
+#nap-header button {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#nap-body {
+  padding: 10px;
+}
+
+#nap-idle {
+  color: #555;
+}
+
+#nap-row {
+  margin-bottom: 4px;
+}
+
+#nap-mobile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+#nap-mobile {
+  font-weight: bold;
+  font-size: 16px;
+  letter-spacing: 0.5px;
+}
+
+#nap-status {
+  font-size: 12px;
+  color: #1a73e8;
+  min-height: 16px;
+  margin: 4px 0;
+}
+
+.nap-btn {
+  font-size: 12px;
+  padding: 6px 8px;
+  margin: 3px 3px 3px 0;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  background: #f5f5f5;
+}
+
+.nap-btn.nap-primary {
+  background: #1a73e8;
+  color: white;
+  border: none;
+}
+
+.nap-btn.nap-stop {
+  background: #d93025;
+  color: white;
+  border: none;
+}
+
+#nap-completed-fields input {
+  width: 100%;
+  padding: 6px;
+  margin: 4px 0;
+  box-sizing: border-box;
+  font-size: 12px;
+}

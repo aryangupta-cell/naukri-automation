@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Naukri Automation Helper",
+  "version": "0.1.0",
+  "description": "Shows the next queued candidate lookup from the local Naukri Automation worker directly on Resdex, so you don't have to switch tabs.",
+  "content_scripts": [
+    {
+      "matches": ["https://resdex.naukri.com/*"],
+      "js": ["content.js"],
+      "css": ["panel.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": ["http://localhost:4545/*"]
+}
