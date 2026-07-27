@@ -260,7 +260,15 @@
     const idleEl = document.getElementById("nap-idle");
     const cardEl = document.getElementById("nap-card");
 
-    if (state.pending) {
+    if (state.pending && state.pending.channel === "linkedin") {
+      // This candidate's LinkedIn step is being handled on a linkedin.com tab, not here.
+      cardEl.style.display = "none";
+      lastKey = null;
+      lastValue = null;
+      autoAttemptedKey = null;
+      idleEl.style.display = "block";
+      idleEl.textContent = `Waiting for the LinkedIn check on row ${state.pending.rowNumber} to finish...`;
+    } else if (state.pending) {
       const key = `${state.pending.rowNumber}:${state.pending.channel}:${state.pending.value}`;
       idleEl.style.display = "none";
       cardEl.style.display = "block";

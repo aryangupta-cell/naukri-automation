@@ -8,11 +8,12 @@ import {
   setWorkerStatus,
   readDataRows,
   writeChannelResult,
+  writeLinkedInResult,
   type Sheet1ControlState,
 } from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
 import { normalizeMobile } from "./domain/mobile.js";
-import type { CandidateResult, RunStage, SearchChannel, SheetRow } from "./domain/types.js";
+import type { CandidateResult, LinkedInResult, RunStage, SearchChannel, SheetRow } from "./domain/types.js";
 import { maskMobile } from "./utils/mask.js";
 import { sleep } from "./utils/sleep.js";
 import { resolveWithCache } from "./utils/cache.js";
@@ -34,15 +35,20 @@ const stop = installStopHandler();
 let currentRunId = "idle";
 let currentStage: RunStage = "IDLE";
 
+type Channel = SearchChannel | "linkedin";
+/** The "Stop run" button can interrupt any channel, so every wait path can resolve with this. */
+type StoppedSignal = { status: "Stopped" };
+type PendingResult = CandidateResult | LinkedInResult | StoppedSignal;
+
 interface PendingPrompt {
   runId: string;
   rowNumber: number;
   name: string;
   value: string;
-  channel: SearchChannel;
+  channel: Channel;
 }
 interface PendingState extends PendingPrompt {
-  resolve: (result: CandidateResult) => void;
+  resolve: (result: PendingResult) => void;
 }
 
 let pending: PendingState | null = null;
@@ -50,7 +56,20 @@ let lastRunSummary: string | null = null;
 
 function waitForHuman(runId: string, row: SheetRow, value: string, channel: SearchChannel): Promise<CandidateResult> {
   return new Promise((resolve) => {
-    pending = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve };
+    pending = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve: resolve as (result: PendingResult) => void };
+  });
+}
+
+function waitForLinkedIn(runId: string, row: SheetRow): Promise<LinkedInResult | StoppedSignal> {
+  return new Promise((resolve) => {
+    pending = {
+      runId,
+      rowNumber: row.rowNumber,
+      name: row.name,
+      value: row.linkedinUrl,
+      channel: "linkedin",
+      resolve: resolve as (result: PendingResult) => void,
+    };
   });
 }
 
@@ -93,19 +112,28 @@ const PAGE_HTML = `<!doctype html>
   <button class="stop" onclick="submitResult('Stopped')">Stop run</button>
   <div class="row">Row <span id="rowNumber"></span>: <span id="name"></span> (<span id="channel"></span>)</div>
   <div class="row mobile" id="mobile"></div>
-  <p>Search this in Resdex &gt; Search Resumes in your own browser, then report the result:</p>
-  <button class="primary" onclick="showCompleted()">Completed</button>
-  <button onclick="submitResult('Not Found')">Not Found</button>
-  <button onclick="submitResult('Multiple Matches')">Multiple Matches</button>
-  <button onclick="submitResult('Manual Intervention')">Manual Intervention</button>
-  <button onclick="submitResult('Failed')">Failed</button>
 
-  <div id="modifiedFields">
-    <label>Exact "Modified ..." text</label>
-    <input type="text" id="modifiedInput" placeholder="e.g. Modified 3 months ago" />
-    <label>Exact "Active ..." text</label>
-    <input type="text" id="activeInput" placeholder="e.g. Active yesterday" />
-    <button class="primary" onclick="submitCompleted()">Submit</button>
+  <div id="naukriButtons">
+    <p>Search this in Resdex &gt; Search Resumes in your own browser, then report the result:</p>
+    <button class="primary" onclick="showCompleted()">Completed</button>
+    <button onclick="submitResult('Not Found')">Not Found</button>
+    <button onclick="submitResult('Multiple Matches')">Multiple Matches</button>
+    <button onclick="submitResult('Manual Intervention')">Manual Intervention</button>
+    <button onclick="submitResult('Failed')">Failed</button>
+
+    <div id="modifiedFields">
+      <label>Exact "Modified ..." text</label>
+      <input type="text" id="modifiedInput" placeholder="e.g. Modified 3 months ago" />
+      <label>Exact "Active ..." text</label>
+      <input type="text" id="activeInput" placeholder="e.g. Active yesterday" />
+      <button class="primary" onclick="submitCompleted()">Submit</button>
+    </div>
+  </div>
+
+  <div id="linkedinButtons" style="display:none">
+    <p>Open this LinkedIn URL yourself, check for "Open to work", then report the result:</p>
+    <button class="primary" onclick="submitResult('Yes')">Yes</button>
+    <button onclick="submitResult('No')">No</button>
   </div>
 </div>
 <script>
@@ -156,6 +184,9 @@ async function poll() {
       document.getElementById('name').textContent = state.pending.name;
       document.getElementById('mobile').textContent = state.pending.value;
       document.getElementById('channel').textContent = state.pending.channel;
+      const isLinkedin = state.pending.channel === 'linkedin';
+      document.getElementById('naukriButtons').style.display = isLinkedin ? 'none' : 'block';
+      document.getElementById('linkedinButtons').style.display = isLinkedin ? 'block' : 'none';
       lastMobile = state.pending.value;
     }
   } else {
@@ -234,13 +265,21 @@ function startServer(): void {
             return;
           }
           const status = String(body.status ?? "");
-          const result: CandidateResult =
-            status === "Completed"
-              ? { status: "Completed", modified: String(body.modified ?? ""), active: String(body.active ?? "") }
-              : { status: status as CandidateResult["status"] };
           const resolve = pending.resolve;
+          const channel = pending.channel;
           pending = null;
-          resolve(result);
+
+          if (status === "Stopped") {
+            resolve({ status: "Stopped" });
+          } else if (channel === "linkedin") {
+            resolve({ status: status === "Yes" ? "Yes" : "No" });
+          } else {
+            const result: CandidateResult =
+              status === "Completed"
+                ? { status: "Completed", modified: String(body.modified ?? ""), active: String(body.active ?? "") }
+                : { status: status as CandidateResult["status"] };
+            resolve(result);
+          }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true }));
         })
@@ -274,6 +313,7 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 
   const phoneCache = new Map<string, CandidateResult>();
   const emailCache = new Map<string, CandidateResult>();
+  const linkedinCache = new Map<string, LinkedInResult | StoppedSignal>();
   const counts: Record<string, number> = {};
   let processed = 0;
 
@@ -346,6 +386,25 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
         await logger.event(
           "PROCESSING_ROW",
           `Row ${row.rowNumber} email -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+          { candidateRow: row.rowNumber, candidateName: row.name },
+        );
+      }
+
+      // LinkedIn "Open to Work" check (column K) - only if a LinkedIn URL is present.
+      if (row.linkedinUrl.trim() !== "") {
+        const linkedinKey = row.linkedinUrl.toLowerCase();
+        const { value: result, fromCache } = await resolveWithCache(linkedinCache, linkedinKey, () => waitForLinkedIn(runId, row));
+
+        if (result.status === "Stopped") {
+          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (linkedin).`, { level: "WARN" });
+          break rowLoop;
+        }
+
+        await writeLinkedInResult(row.rowNumber, result);
+        processed++;
+        await logger.event(
+          "PROCESSING_ROW",
+          `Row ${row.rowNumber} linkedin -> ${result.status}${fromCache ? " (cached)" : ""}.`,
           { candidateRow: row.rowNumber, candidateName: row.name },
         );
       }

@@ -88,8 +88,8 @@ Ctrl+C force-exits the terminal.
 ## Prerequisites
 
 - Node.js 20+ (Node 24 confirmed to work)
-- The service-account JSON you already have at
-  `C:\Users\user\Desktop\python\pace\service_account.json`
+- `service_account.json` present in the project folder (or `.env`'s
+  `GOOGLE_APPLICATION_CREDENTIALS` pointed at wherever it actually is)
 - **Share the Google Sheet with the service account as Editor**: open the
   Sheet's Share dialog and add `drt-migration@key-nebula-488407-v8.iam.gserviceaccount.com`
   as Editor. Without this, every API call fails with `403 permission denied`.
@@ -97,8 +97,9 @@ Ctrl+C force-exits the terminal.
 
 ## Setup
 
+Just double-click `First-Time Setup.bat`, or manually:
 ```powershell
-cd "C:\Users\user\Claude Dashboard\naukri-automation"
+cd path\to\naukri-automation
 npm install
 copy .env.example .env
 ```

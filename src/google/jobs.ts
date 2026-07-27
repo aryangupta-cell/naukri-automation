@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { RESULT_TREATMENT } from "../domain/statuses.js";
-import type { CandidateResult, LogEntry, SearchChannel, SheetRow } from "../domain/types.js";
+import type { CandidateResult, LinkedInResult, LogEntry, SearchChannel, SheetRow } from "../domain/types.js";
 import { appendRow, getRange, setCell, setRow } from "./sheets.js";
 
 /** Automation Control cell map (fixed layout of the live "Automation Control" tab). */
@@ -14,7 +14,8 @@ const CONTROL_CELLS = {
  * written for dashboard visibility, but no longer read to decide anything.
  *
  * Data columns: A Mobile Number, B Email, C Name, D:F Phone No -
- * Status/Modified/Active, G:I Email - Status/Modified/Active.
+ * Status/Modified/Active, G:I Email - Status/Modified/Active, J LinkedIn ID
+ * Link (input), K Open to Work (output, strictly Yes/No).
  */
 const SHEET1_TRIGGER_CELLS = {
   trigger: "Q1",
@@ -24,6 +25,7 @@ const SHEET1_TRIGGER_CELLS = {
 
 const PHONE_RESULT_COLUMNS = { status: "D", firstCol: "D", lastCol: "F" } as const;
 const EMAIL_RESULT_COLUMNS = { status: "G", firstCol: "G", lastCol: "I" } as const;
+const LINKEDIN_RESULT_COLUMN = "K";
 
 export interface Sheet1ControlState {
   triggered: boolean;
@@ -47,21 +49,24 @@ export async function setWorkerStatus(text: string): Promise<void> {
   await setCell(config.controlTabName, CONTROL_CELLS.workerStatus, text);
 }
 
-/** Reads data rows (mobile, email, name) for the inclusive [startRow, endRow] range. */
+/** Reads data rows (mobile, email, name, LinkedIn URL) for the inclusive [startRow, endRow] range. */
 export async function readDataRows(startRow: number, endRow: number): Promise<SheetRow[]> {
-  const values = await getRange(config.dataTabName, `A${startRow}:C${endRow}`);
+  const values = await getRange(config.dataTabName, `A${startRow}:J${endRow}`);
   const rows: SheetRow[] = [];
   values.forEach((row, i) => {
     const mobileRaw = row[0];
     const email = row[1];
+    const linkedinUrl = row[9];
     const hasMobile = mobileRaw !== undefined && mobileRaw !== null && String(mobileRaw).trim() !== "";
     const hasEmail = email !== undefined && email !== null && String(email).trim() !== "";
-    if (!hasMobile && !hasEmail) return;
+    const hasLinkedIn = linkedinUrl !== undefined && linkedinUrl !== null && String(linkedinUrl).trim() !== "";
+    if (!hasMobile && !hasEmail && !hasLinkedIn) return;
     rows.push({
       rowNumber: startRow + i,
       mobileRaw: hasMobile ? String(mobileRaw) : "",
       email: hasEmail ? String(email).trim() : "",
       name: String(row[2] ?? ""),
+      linkedinUrl: hasLinkedIn ? String(linkedinUrl).trim() : "",
     });
   });
   return rows;
@@ -78,6 +83,11 @@ export async function writeChannelResult(rowNumber: number, channel: SearchChann
   const modified = treatment === "overwrite" ? result.modified ?? "" : "";
   const active = treatment === "overwrite" ? result.active ?? "" : "";
   await setRow(config.dataTabName, `${cols.firstCol}${rowNumber}:${cols.lastCol}${rowNumber}`, [result.status, modified, active]);
+}
+
+/** Writes the LinkedIn "Open to Work" result to column K - always exactly "Yes" or "No". */
+export async function writeLinkedInResult(rowNumber: number, result: LinkedInResult): Promise<void> {
+  await setCell(config.dataTabName, `${LINKEDIN_RESULT_COLUMN}${rowNumber}`, result.status);
 }
 
 function formatTimestamp(date: Date): string {

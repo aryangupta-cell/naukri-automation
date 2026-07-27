@@ -6,10 +6,17 @@ export interface SheetRow {
   mobileRaw: string;
   email: string;
   name: string;
+  /** LinkedIn profile URL, column J. */
+  linkedinUrl: string;
 }
 
 /** Which contact channel a search/result is for - phone columns D:F, email columns G:I. */
 export type SearchChannel = "phone" | "email";
+
+/** LinkedIn "Open to Work" check result, column K - strictly Yes/No, no other vocabulary. */
+export interface LinkedInResult {
+  status: "Yes" | "No";
+}
 
 export interface NormalizedMobile {
   valid: boolean;
