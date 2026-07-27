@@ -105,7 +105,25 @@ Edit `.env`:
 - `TEST_TAB_NAME` — leave as `Sheet1_Test` for now.
 - `GOOGLE_APPLICATION_CREDENTIALS` — path to your service-account JSON.
 
-## Step-by-step rollout
+## Daily use (after one-time setup below)
+
+1. Double-click **`Start Naukri Worker.bat`** in this folder. Keep the window it opens visible/open.
+2. Make sure the browser extension is loaded (one-time setup, see below) and a `resdex.naukri.com` tab is open — the panel shows top-right.
+3. Tick **B3** in the Automation Control tab.
+
+That's it — no typed commands. `Start Naukri Worker.bat` just runs `npm run agent:web` for you.
+
+## One-time setup on a new computer
+
+1. Install [Node.js](https://nodejs.org) (LTS) and Google Chrome if not already present.
+2. Copy this whole project folder to the new computer (`node_modules`, `.data`, `.env` are all excluded automatically — see `.gitignore`).
+3. Separately, securely transfer the service-account JSON credential file (do not email it casually) — put it anywhere on the new computer.
+4. Double-click **`First-Time Setup.bat`** — installs dependencies, creates `.env`, and opens Notepad so you can fill in the path to that service-account file.
+5. In that computer's own regular Chrome, log into Naukri Recruiter once, normally — this is a manual, per-machine, per-account step that can't be skipped or shared.
+6. Load the extension (see "Load the browser extension" below).
+7. From now on: double-click `Start Naukri Worker.bat`, tick B3.
+
+## Step-by-step rollout (manual/CLI version, for reference or troubleshooting)
 
 ### 1. Verify Google access
 ```powershell
@@ -118,6 +136,7 @@ sheet-sharing step above hasn't been done yet.
 ```powershell
 npm run agent:web
 ```
+(Or just double-click `Start Naukri Worker.bat` instead — same thing.)
 Leave this running — it's the Sheet-side brain (trigger detection, claiming,
 row read/write, Execution Log, dedupe cache) and hosts a small local API at
 `http://localhost:4545` that either the extension or a plain browser tab can
