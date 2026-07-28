@@ -106,7 +106,7 @@ const PAGE_HTML = `<!doctype html>
 </head>
 <body>
 <h1>Naukri Automation - Candidate Lookup</h1>
-<div id="idle">Waiting for a run to be triggered (tick Q1 on Sheet1)...</div>
+<div id="idle">Waiting for a run to be triggered (tick X1 on Sheet1)...</div>
 <div id="done"></div>
 <div id="card">
   <button class="stop" onclick="submitResult('Stopped')">Stop run</button>
@@ -434,7 +434,7 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 async function mainLoop(): Promise<void> {
   console.log("Naukri automation - WEB human-in-the-loop mode");
   console.log(`  Data tab: "${config.dataTabName}"`);
-  console.log(`  Trigger:  ${config.dataTabName}!Q1 (checkbox), R1 (start row), S1 (end row, inclusive)`);
+  console.log(`  Trigger:  ${config.dataTabName}!X1 (checkbox), Y1 (start row), Z1 (end row, inclusive)`);
 
   startServer();
   await setWorkerStatus("READY");

@@ -133,7 +133,7 @@
         : state.idle
           ? state.lastRunSummary
             ? `Last run: ${state.lastRunSummary}`
-            : "Waiting for a run to be triggered (tick Q1)..."
+            : "Waiting for a run to be triggered (tick X1)..."
           : "Run in progress, waiting for the next LinkedIn check...";
     }
   }

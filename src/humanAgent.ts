@@ -197,7 +197,7 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 async function mainLoop(): Promise<void> {
   console.log("Naukri automation - HUMAN-IN-THE-LOOP mode");
   console.log(`  Data tab: "${config.dataTabName}"`);
-  console.log(`  Trigger:  ${config.dataTabName}!Q1 (checkbox), R1 (start row), S1 (end row, inclusive)`);
+  console.log(`  Trigger:  ${config.dataTabName}!X1 (checkbox), Y1 (start row), Z1 (end row, inclusive)`);
   console.log("  You'll be prompted to search each candidate yourself in Resdex and report the result.");
 
   await setWorkerStatus("READY");
