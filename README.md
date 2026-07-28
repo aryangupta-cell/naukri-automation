@@ -123,9 +123,17 @@ That's it — no typed commands. `Start Naukri Worker.bat` just runs `npm run ag
 2. Copy this whole project folder to the new computer (`node_modules`, `.data`, `.env` are all excluded automatically — see `.gitignore`).
 3. Separately, securely transfer the service-account JSON credential file (do not email it casually) — put it anywhere on the new computer.
 4. Double-click **`First-Time Setup.bat`** — installs dependencies, creates `.env`, and opens Notepad so you can fill in the path to that service-account file.
-5. In that computer's own regular Chrome, log into Naukri Recruiter once, normally — this is a manual, per-machine, per-account step that can't be skipped or shared.
-6. Load the extension (see "Load the browser extension" below).
-7. From now on: double-click `Start Naukri Worker.bat`, set R1/S1, tick Q1.
+5. Double-click **`Link to GitHub (one-time).bat`** — connects this copy to the shared private repo, so future code changes can be pulled instead of re-shared as a zip.
+6. In that computer's own regular Chrome, log into Naukri Recruiter once, normally — this is a manual, per-machine, per-account step that can't be skipped or shared. Same for LinkedIn if using the Open-to-Work check.
+7. Load the extension (see "Load the browser extension" below).
+8. From now on: double-click `Start Naukri Worker.bat`, set Y1/Z1 (row range), tick X1.
+
+## Getting code updates onto the other computer
+
+Once linked to GitHub (step 5 above), any future code changes just need:
+1. Double-click **`Check for Updates.bat`** on the other computer.
+
+That's it — no re-zipping, no re-sharing the folder. It runs `git pull` (pulls only the actual changed files, never touches `.env`/`service_account.json`/`node_modules` unless `package.json` itself changed, in which case it also reruns `npm install`).
 
 ## Step-by-step rollout (manual/CLI version, for reference or troubleshooting)
 
