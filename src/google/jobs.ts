@@ -9,23 +9,23 @@ const CONTROL_CELLS = {
 } as const;
 
 /**
- * Trigger cells live on the data tab itself: Q1 checkbox, R1 start row, S1
+ * Trigger cells live on the data tab itself: X1 checkbox, Y1 start row, Z1
  * end row (inclusive). Automation Control's B5 "Worker status" is still
  * written for dashboard visibility, but no longer read to decide anything.
  *
- * Data columns: A Mobile Number, B Email, C Name, D:F Phone No -
- * Status/Modified/Active, G:I Email - Status/Modified/Active, J LinkedIn ID
- * Link (input), K Open to Work (output, strictly Yes/No).
+ * Data columns: A Mobile Number, B Email, C LinkedIn ID Link (input),
+ * D:E unused/reserved, F Name, G:I Phone No - Status/Modified/Active,
+ * J:L Email - Status/Modified/Active, M Open to Work (output, strictly Yes/No).
  */
 const SHEET1_TRIGGER_CELLS = {
-  trigger: "Q1",
-  startRow: "R1",
-  endRow: "S1",
+  trigger: "X1",
+  startRow: "Y1",
+  endRow: "Z1",
 } as const;
 
-const PHONE_RESULT_COLUMNS = { status: "D", firstCol: "D", lastCol: "F" } as const;
-const EMAIL_RESULT_COLUMNS = { status: "G", firstCol: "G", lastCol: "I" } as const;
-const LINKEDIN_RESULT_COLUMN = "K";
+const PHONE_RESULT_COLUMNS = { status: "G", firstCol: "G", lastCol: "I" } as const;
+const EMAIL_RESULT_COLUMNS = { status: "J", firstCol: "J", lastCol: "L" } as const;
+const LINKEDIN_RESULT_COLUMN = "M";
 
 export interface Sheet1ControlState {
   triggered: boolean;
@@ -34,7 +34,7 @@ export interface Sheet1ControlState {
 }
 
 export async function readSheet1ControlState(): Promise<Sheet1ControlState> {
-  const values = await getRange(config.dataTabName, "Q1:S1");
+  const values = await getRange(config.dataTabName, "X1:Z1");
   const triggered = Boolean(values[0]?.[0]);
   const startRow = Number(values[0]?.[1]) || 2;
   const endRow = Number(values[0]?.[2]) || startRow;
@@ -49,14 +49,16 @@ export async function setWorkerStatus(text: string): Promise<void> {
   await setCell(config.controlTabName, CONTROL_CELLS.workerStatus, text);
 }
 
-/** Reads data rows (mobile, email, name, LinkedIn URL) for the inclusive [startRow, endRow] range. */
+/** Reads data rows (mobile, email, LinkedIn URL, name) for the inclusive [startRow, endRow] range. Columns D:E are unused/reserved and skipped. */
 export async function readDataRows(startRow: number, endRow: number): Promise<SheetRow[]> {
-  const values = await getRange(config.dataTabName, `A${startRow}:J${endRow}`);
+  const values = await getRange(config.dataTabName, `A${startRow}:F${endRow}`);
   const rows: SheetRow[] = [];
   values.forEach((row, i) => {
-    const mobileRaw = row[0];
-    const email = row[1];
-    const linkedinUrl = row[9];
+    const mobileRaw = row[0]; // A
+    const email = row[1]; // B
+    const linkedinUrl = row[2]; // C
+    // row[3], row[4] = D, E - unused/reserved, intentionally skipped
+    const name = row[5]; // F
     const hasMobile = mobileRaw !== undefined && mobileRaw !== null && String(mobileRaw).trim() !== "";
     const hasEmail = email !== undefined && email !== null && String(email).trim() !== "";
     const hasLinkedIn = linkedinUrl !== undefined && linkedinUrl !== null && String(linkedinUrl).trim() !== "";
@@ -65,7 +67,7 @@ export async function readDataRows(startRow: number, endRow: number): Promise<Sh
       rowNumber: startRow + i,
       mobileRaw: hasMobile ? String(mobileRaw) : "",
       email: hasEmail ? String(email).trim() : "",
-      name: String(row[2] ?? ""),
+      name: String(name ?? ""),
       linkedinUrl: hasLinkedIn ? String(linkedinUrl).trim() : "",
     });
   });
