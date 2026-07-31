@@ -178,33 +178,14 @@
     return null;
   }
 
-  async function autoSearch(value) {
-    const onSearchPage = window.location.href.includes("activeTab=advSrch");
-    let keywordsInput = document.querySelector(KEYWORDS_SELECTOR);
+  function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
 
-    if (!keywordsInput && !onSearchPage) {
-      setStatus("Navigating to Search Resumes...");
-      window.location.href = SEARCH_URL;
-      return; // the fresh page load re-runs this content script and retries
-    }
-
-    // Pacing to avoid tripping Naukri's rate-limiting/CAPTCHA - widened from
-    // the spec's original 2-5s after still hitting CAPTCHAs during a full-sheet run.
-    setStatus("Waiting a few seconds before searching...");
-    await randomDelay(5000, 10000);
-
-    if (!keywordsInput) {
-      // Already on the search page, just still rendering - wait for it
-      // rather than re-navigating (re-navigating here caused a reload loop).
-      setStatus("Waiting for the search page to load...");
-      keywordsInput = await waitForElement(KEYWORDS_SELECTOR, 10000);
-      if (!keywordsInput) {
-        setStatus("Search page didn't load in time - please continue manually.");
-        return;
-      }
-    }
-
-    setStatus("Searching...");
+  // Types the value into the Keywords field and confirms it into a chip.
+  // Returns true once a chip is confirmed, false if Naukri never confirmed
+  // it after a retry (caller decides whether to try the whole cycle again).
+  async function typeAndConfirmChip(keywordsInput, value) {
     await clearAllKeywordChips();
     await sleep(200);
     setReactInputValue(keywordsInput, value);
@@ -221,8 +202,6 @@
     keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
     await sleep(1200);
 
-    // If the chip didn't confirm (no matching remove icon appeared), retry:
-    // re-set the value (in case it got lost) and press Enter again.
     if (!document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) {
       setReactInputValue(keywordsInput, value);
       await sleep(900);
@@ -231,19 +210,18 @@
       await sleep(1200);
     }
 
-    // Still no chip after retrying - don't search on an empty/unconfirmed
-    // box, Naukri will just reject it as "too generic" every time. Stop and
-    // let it be classified manually instead of wasting a search attempt.
-    if (!document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) {
-      setStatus('Could not get Naukri to confirm the search chip - please search "' + value + '" manually and classify the result below.');
-      return;
-    }
+    return Boolean(document.querySelector(CHIP_REMOVE_ICON_SELECTOR));
+  }
+
+  // Runs one full search attempt (type value, confirm chip, click Search,
+  // wait for an outcome) and returns the outcome without submitting
+  // anything - callers decide what to do with it (retry, submit, etc).
+  async function runOneSearchAttempt(keywordsInput, value) {
+    const chipConfirmed = await typeAndConfirmChip(keywordsInput, value);
+    if (!chipConfirmed) return "no-chip";
 
     const searchButton = document.querySelector(SEARCH_BUTTON_SELECTOR);
-    if (!searchButton) {
-      setStatus("Could not find the Search button - please continue manually.");
-      return;
-    }
+    if (!searchButton) return "no-search-button";
     searchButton.click();
 
     const startUrl = window.location.href;
@@ -264,6 +242,75 @@
         break;
       }
     }
+    return outcome;
+  }
+
+  async function goToSearchPageIfNeeded() {
+    const onSearchPage = window.location.href.includes("activeTab=advSrch");
+    let keywordsInput = document.querySelector(KEYWORDS_SELECTOR);
+
+    if (!keywordsInput && !onSearchPage) {
+      setStatus("Navigating to Search Resumes...");
+      window.location.href = SEARCH_URL;
+      return null; // the fresh page load re-runs this content script and retries
+    }
+
+    // Pacing to avoid tripping Naukri's rate-limiting/CAPTCHA - widened from
+    // the spec's original 2-5s after still hitting CAPTCHAs during a full-sheet run.
+    setStatus("Waiting a few seconds before searching...");
+    await randomDelay(5000, 10000);
+
+    if (!keywordsInput) {
+      // Already on the search page, just still rendering - wait for it
+      // rather than re-navigating (re-navigating here caused a reload loop).
+      setStatus("Waiting for the search page to load...");
+      keywordsInput = await waitForElement(KEYWORDS_SELECTOR, 10000);
+      if (!keywordsInput) {
+        setStatus("Search page didn't load in time - please continue manually.");
+        return null;
+      }
+    }
+    return keywordsInput;
+  }
+
+  const DECOY_CHANNELS = new Set(["name", "department"]);
+
+  // Phone/email real searches: single attempt, except phone gets a random
+  // 2-4 total attempts when the search comes back ambiguous ("too generic"
+  // or a timeout) - Naukri appears to flag bare phone-number-only searches
+  // as too generic fairly often, and retrying the identical search a few
+  // times before giving up recovers a chunk of those without needing a
+  // human to intervene every time.
+  async function autoSearch(value, channel) {
+    const keywordsInput = await goToSearchPageIfNeeded();
+    if (!keywordsInput) return;
+
+    const isDecoy = DECOY_CHANNELS.has(channel);
+    const maxAttempts = channel === "phone" ? randomInt(2, 4) : 1;
+
+    setStatus("Searching...");
+    let outcome = "timeout";
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      outcome = await runOneSearchAttempt(keywordsInput, value);
+
+      if (isDecoy) {
+        // Decoy searches exist purely to vary the query pattern - the
+        // outcome is irrelevant, always move on after one attempt.
+        await clearAllKeywordChips();
+        setStatus("Decoy search done, moving on...");
+        await submit({ status: "Done" });
+        return;
+      }
+
+      if (outcome === "profile" || outcome === "no-results") break;
+
+      // Ambiguous outcome - retry the same value if attempts remain.
+      if (attempt < maxAttempts) {
+        setStatus(`Search was rejected/unclear (attempt ${attempt}/${maxAttempts}) - retrying...`);
+        await clearAllKeywordChips();
+        await randomDelay(3000, 6000);
+      }
+    }
 
     if (outcome === "no-results") {
       setStatus('Naukri reported "No results found" - submitting Not Found.');
@@ -272,11 +319,13 @@
     }
 
     if (outcome === "too-generic") {
-      // Clear the rejected chip now, not just at the start of the next
-      // call - otherwise it can still be sitting in the box if the next
-      // channel's search fires before this one's leftover chip is removed.
       await clearAllKeywordChips();
-      setStatus("Naukri rejected the search - please classify the result manually below.");
+      setStatus(`Naukri rejected the search after ${maxAttempts} attempt(s) - please classify the result manually below.`);
+      return;
+    }
+
+    if (outcome === "no-chip") {
+      setStatus('Could not get Naukri to confirm the search chip - please search "' + value + '" manually and classify the result below.');
       return;
     }
 
@@ -333,7 +382,7 @@
       }
       if (autoAttemptedKey !== key) {
         autoAttemptedKey = key;
-        autoSearch(state.pending.value);
+        autoSearch(state.pending.value, state.pending.channel);
       }
     } else {
       cardEl.style.display = "none";

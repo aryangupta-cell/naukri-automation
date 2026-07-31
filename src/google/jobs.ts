@@ -17,9 +17,15 @@ const CONTROL_CELLS = {
  * "Controls"), row 2 is the actual header row, data starts at row 3.
  *
  * Data columns: A Name, B Mobile Number, C Email, D LinkedIn ID Link
- * (input), E:G Department/Designation/Grade (informational, unused by the
- * worker), H:I unused/reserved, J:L Phone - Status/Modified/Active,
+ * (input), E Department (input - used only as a decoy search value, see
+ * below), F:G Designation/Grade (informational, unused by the worker),
+ * H:I unused/reserved, J:L Phone - Status/Modified/Active,
  * M:O Email - Status/Modified/Active, P Open to Work (output, strictly Yes/No).
+ *
+ * Per-row search order: Name (decoy) -> Phone -> Department (decoy) ->
+ * Email -> LinkedIn. The decoy searches exist only to break up the
+ * phone/email search pattern that Naukri was flagging as "too generic";
+ * their results are never read or written anywhere.
  */
 const SHEET1_TRIGGER_CELLS = {
   trigger: "AA2",
@@ -53,15 +59,16 @@ export async function setWorkerStatus(text: string): Promise<void> {
   await setCell(config.controlTabName, CONTROL_CELLS.workerStatus, text);
 }
 
-/** Reads data rows (name, mobile, email, LinkedIn URL) for the inclusive [startRow, endRow] range. Columns E:I (Department/Designation/Grade + reserved) are skipped. */
+/** Reads data rows (name, mobile, email, department, LinkedIn URL) for the inclusive [startRow, endRow] range. Columns F:I (Designation/Grade + reserved) are skipped. */
 export async function readDataRows(startRow: number, endRow: number): Promise<SheetRow[]> {
-  const values = await getRange(config.dataTabName, `A${startRow}:D${endRow}`);
+  const values = await getRange(config.dataTabName, `A${startRow}:E${endRow}`);
   const rows: SheetRow[] = [];
   values.forEach((row, i) => {
     const name = row[0]; // A
     const mobileRaw = row[1]; // B
     const email = row[2]; // C
     const linkedinUrl = row[3]; // D
+    const department = row[4]; // E
     const hasMobile = mobileRaw !== undefined && mobileRaw !== null && String(mobileRaw).trim() !== "";
     const hasEmail = email !== undefined && email !== null && String(email).trim() !== "";
     const hasLinkedIn = linkedinUrl !== undefined && linkedinUrl !== null && String(linkedinUrl).trim() !== "";
@@ -71,6 +78,7 @@ export async function readDataRows(startRow: number, endRow: number): Promise<Sh
       mobileRaw: hasMobile ? String(mobileRaw) : "",
       email: hasEmail ? String(email).trim() : "",
       name: String(name ?? ""),
+      department: String(department ?? "").trim(),
       linkedinUrl: hasLinkedIn ? String(linkedinUrl).trim() : "",
     });
   });

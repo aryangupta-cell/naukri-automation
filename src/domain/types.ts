@@ -6,12 +6,21 @@ export interface SheetRow {
   mobileRaw: string;
   email: string;
   name: string;
+  /** Department, column E - used only as a decoy search value, never written anywhere. */
+  department: string;
   /** LinkedIn profile URL, column J. */
   linkedinUrl: string;
 }
 
-/** Which contact channel a search/result is for - phone columns D:F, email columns G:I. */
+/** Which contact channel a search/result is for - phone columns J:L, email columns M:O. */
 export type SearchChannel = "phone" | "email";
+
+/**
+ * Non-result search channels searched purely to vary the query pattern
+ * between real (phone/email) searches - their outcome is never read or
+ * written anywhere, only the act of searching matters.
+ */
+export type DecoyChannel = "name" | "department";
 
 /** LinkedIn "Open to Work" check result, column K - strictly Yes/No, no other vocabulary. */
 export interface LinkedInResult {
