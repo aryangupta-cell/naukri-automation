@@ -281,19 +281,20 @@
   }
 
   const DECOY_CHANNELS = new Set(["name", "department"]);
+  const RETRY_CHANNELS = new Set(["phone", "email"]);
 
-  // Phone/email real searches: single attempt, except phone gets a random
-  // 2-4 total attempts when the search comes back ambiguous ("too generic"
-  // or a timeout) - Naukri appears to flag bare phone-number-only searches
-  // as too generic fairly often, and retrying the identical search a few
-  // times before giving up recovers a chunk of those without needing a
-  // human to intervene every time.
+  // Phone/email real searches get a random 3-7 total attempts when the
+  // search comes back ambiguous ("too generic" or a timeout) - Naukri
+  // appears to flag bare keyword-only searches as too generic fairly
+  // often, and retrying the identical search a few times before giving up
+  // recovers a chunk of those without needing a human to intervene every
+  // time.
   async function autoSearch(value, channel) {
     const keywordsInput = await goToSearchPageIfNeeded();
     if (!keywordsInput) return;
 
     const isDecoy = DECOY_CHANNELS.has(channel);
-    const maxAttempts = channel === "phone" ? randomInt(2, 4) : 1;
+    const maxAttempts = RETRY_CHANNELS.has(channel) ? randomInt(3, 7) : 1;
 
     setStatus("Searching...");
     let outcome = "timeout";
