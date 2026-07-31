@@ -133,13 +133,27 @@
   const CHIP_REMOVE_SELECTOR = ".tag-ico.naukri-icon.naukri-icon-times";
 
   // Removes any leftover keyword chips from a previous search so consecutive
-  // auto-searches don't stack multiple numbers into one query.
+  // auto-searches don't stack multiple numbers into one query. Keeps
+  // re-checking (not just looping a fixed count) so a slow-to-update DOM
+  // still ends up empty before the caller proceeds.
   async function clearAllKeywordChips() {
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
       const removeIcon = document.querySelector(CHIP_REMOVE_SELECTOR);
       if (!removeIcon) break;
       removeIcon.click();
-      await sleep(250);
+      await sleep(300);
+    }
+    // Final safety check - if chips are still present after 20 attempts,
+    // wait a bit longer and try once more rather than silently proceeding
+    // with a contaminated keyword box.
+    if (document.querySelector(CHIP_REMOVE_SELECTOR)) {
+      await sleep(500);
+      for (let i = 0; i < 10; i++) {
+        const removeIcon = document.querySelector(CHIP_REMOVE_SELECTOR);
+        if (!removeIcon) break;
+        removeIcon.click();
+        await sleep(300);
+      }
     }
   }
 
@@ -191,7 +205,18 @@
     const enterEventInit = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true };
     keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
     keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
-    await sleep(500);
+    // Give Naukri's autocomplete time to actually validate and confirm the
+    // chip before Search is clicked - too short a wait here was likely why
+    // valid single-value searches were getting flagged "too generic".
+    await sleep(1200);
+
+    // If the chip didn't confirm (no matching remove icon appeared), retry
+    // the Enter once rather than searching on unconfirmed raw text.
+    if (!document.querySelector(CHIP_REMOVE_SELECTOR)) {
+      keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
+      keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
+      await sleep(1200);
+    }
 
     const searchButton = document.querySelector(SEARCH_BUTTON_SELECTOR);
     if (!searchButton) {
@@ -226,11 +251,16 @@
     }
 
     if (outcome === "too-generic") {
+      // Clear the rejected chip now, not just at the start of the next
+      // call - otherwise it can still be sitting in the box if the next
+      // channel's search fires before this one's leftover chip is removed.
+      await clearAllKeywordChips();
       setStatus("Naukri rejected the search - please classify the result manually below.");
       return;
     }
 
     if (outcome !== "profile") {
+      await clearAllKeywordChips();
       setStatus("Could not confirm what happened after searching - please classify the result manually below.");
       return;
     }
