@@ -130,7 +130,18 @@
     return { modified, active };
   }
 
-  const CHIP_REMOVE_SELECTOR = ".tag-ico.naukri-icon.naukri-icon-times";
+  // Confirmed via live DOM inspection: the remove control is a
+  // <button class="tag-ico-button ..." aria-label="Remove <value>"> wrapping
+  // an <i class="naukri-icon naukri-icon-times">. Match on the icon (stable
+  // across chip states) and click its closest button ancestor, since the
+  // click handler lives on the button, not the icon.
+  const CHIP_REMOVE_ICON_SELECTOR = "i.naukri-icon-times";
+
+  function findChipRemoveButton() {
+    const icon = document.querySelector(CHIP_REMOVE_ICON_SELECTOR);
+    if (!icon) return null;
+    return icon.closest("button") || icon.closest('[role="button"]') || icon;
+  }
 
   // Removes any leftover keyword chips from a previous search so consecutive
   // auto-searches don't stack multiple numbers into one query. Keeps
@@ -138,20 +149,20 @@
   // still ends up empty before the caller proceeds.
   async function clearAllKeywordChips() {
     for (let i = 0; i < 20; i++) {
-      const removeIcon = document.querySelector(CHIP_REMOVE_SELECTOR);
-      if (!removeIcon) break;
-      removeIcon.click();
+      const removeBtn = findChipRemoveButton();
+      if (!removeBtn) break;
+      removeBtn.click();
       await sleep(300);
     }
     // Final safety check - if chips are still present after 20 attempts,
     // wait a bit longer and try once more rather than silently proceeding
     // with a contaminated keyword box.
-    if (document.querySelector(CHIP_REMOVE_SELECTOR)) {
+    if (findChipRemoveButton()) {
       await sleep(500);
       for (let i = 0; i < 10; i++) {
-        const removeIcon = document.querySelector(CHIP_REMOVE_SELECTOR);
-        if (!removeIcon) break;
-        removeIcon.click();
+        const removeBtn = findChipRemoveButton();
+        if (!removeBtn) break;
+        removeBtn.click();
         await sleep(300);
       }
     }
@@ -212,7 +223,7 @@
 
     // If the chip didn't confirm (no matching remove icon appeared), retry
     // the Enter once rather than searching on unconfirmed raw text.
-    if (!document.querySelector(CHIP_REMOVE_SELECTOR)) {
+    if (!document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) {
       keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
       keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
       await sleep(1200);
