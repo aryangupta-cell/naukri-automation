@@ -208,7 +208,10 @@
     await clearAllKeywordChips();
     await sleep(200);
     setReactInputValue(keywordsInput, value);
-    await sleep(300);
+    // Give Naukri's suggestor dropdown time to actually load and register
+    // the typed value before Enter is sent - firing Enter too early can
+    // land before the field is ready to confirm anything into a chip.
+    await sleep(900);
 
     // This field is a chip/tag autocomplete (role="combobox") - typing alone
     // leaves the text unconfirmed; Enter is what turns it into an actual
@@ -216,17 +219,24 @@
     const enterEventInit = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true };
     keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
     keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
-    // Give Naukri's autocomplete time to actually validate and confirm the
-    // chip before Search is clicked - too short a wait here was likely why
-    // valid single-value searches were getting flagged "too generic".
     await sleep(1200);
 
-    // If the chip didn't confirm (no matching remove icon appeared), retry
-    // the Enter once rather than searching on unconfirmed raw text.
+    // If the chip didn't confirm (no matching remove icon appeared), retry:
+    // re-set the value (in case it got lost) and press Enter again.
     if (!document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) {
+      setReactInputValue(keywordsInput, value);
+      await sleep(900);
       keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
       keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
       await sleep(1200);
+    }
+
+    // Still no chip after retrying - don't search on an empty/unconfirmed
+    // box, Naukri will just reject it as "too generic" every time. Stop and
+    // let it be classified manually instead of wasting a search attempt.
+    if (!document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) {
+      setStatus('Could not get Naukri to confirm the search chip - please search "' + value + '" manually and classify the result below.');
+      return;
     }
 
     const searchButton = document.querySelector(SEARCH_BUTTON_SELECTOR);
