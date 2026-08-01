@@ -222,14 +222,14 @@
 
     // Pause before actually clicking Search, like a person glancing at the
     // confirmed chip before hitting the button.
-    await randomDelay(2000, 13000);
+    await randomDelay(2000, 5000);
 
     const searchButton = document.querySelector(SEARCH_BUTTON_SELECTOR);
     if (!searchButton) return "no-search-button";
     searchButton.click();
 
     // Pause after clicking before starting to watch for the outcome.
-    await randomDelay(2000, 13000);
+    await randomDelay(2000, 5000);
 
     const startUrl = window.location.href;
     const deadline = Date.now() + 15000;
@@ -305,10 +305,10 @@
         // Decoy searches exist purely to vary the query pattern - the
         // outcome is irrelevant, always move on after one attempt.
         // Pause as if actually glancing at the results before moving on.
-        await randomDelay(2000, 13000);
+        await randomDelay(2000, 5000);
         await clearAllKeywordChips();
         setStatus("Decoy search done, moving on...");
-        await randomDelay(2000, 13000);
+        await randomDelay(2000, 5000);
         await submit({ status: "Done" });
         return;
       }
@@ -319,13 +319,13 @@
       if (attempt < maxAttempts) {
         setStatus(`Search was rejected/unclear (attempt ${attempt}/${maxAttempts}) - retrying...`);
         await clearAllKeywordChips();
-        await randomDelay(2000, 13000);
+        await randomDelay(2000, 5000);
       }
     }
 
     if (outcome === "no-results") {
       setStatus('Naukri reported "No results found" - submitting Not Found.');
-      await randomDelay(2000, 13000);
+      await randomDelay(2000, 5000);
       await submit({ status: "Not Found" });
       return;
     }
@@ -349,11 +349,11 @@
 
     // Pause before reading the profile panel, like a person actually
     // scanning the page rather than scraping it instantly.
-    await randomDelay(2000, 13000);
+    await randomDelay(2000, 5000);
     const { modified, active } = extractModifiedActive();
     if (modified && active) {
       setStatus(`Auto-extracted: "${modified}" / "${active}". Submitting...`);
-      await randomDelay(2000, 13000);
+      await randomDelay(2000, 5000);
       await submit({ status: "Completed", modified, active });
     } else {
       setStatus("Profile opened but couldn't auto-read Modified/Active - please fill them in manually below.");
