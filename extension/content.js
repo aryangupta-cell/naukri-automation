@@ -319,7 +319,7 @@
       if (attempt < maxAttempts) {
         setStatus(`Search was rejected/unclear (attempt ${attempt}/${maxAttempts}) - retrying...`);
         await clearAllKeywordChips();
-        await randomDelay(2000, 5000);
+        await randomDelay(1000, 2000);
       }
     }
 
