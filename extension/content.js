@@ -184,33 +184,37 @@
 
   // Types the value into the Keywords field and confirms it into a chip.
   // Returns true once a chip is confirmed, false if Naukri never confirmed
-  // it after a retry (caller decides whether to try the whole cycle again).
+  // it after 3 tries total (caller decides whether to try the whole search
+  // cycle again on top of this). Chip confirmation failing is a mechanical
+  // timing issue, not Naukri rejecting content, so it always gets these 3
+  // tries regardless of how many outer search-retry attempts remain.
   async function typeAndConfirmChip(keywordsInput, value) {
-    await clearAllKeywordChips();
-    await sleep(150);
-    setReactInputValue(keywordsInput, value);
-    // Give Naukri's suggestor dropdown time to actually load and register
-    // the typed value before Enter is sent - firing Enter too early can
-    // land before the field is ready to confirm anything into a chip.
-    await sleep(500);
-
-    // This field is a chip/tag autocomplete (role="combobox") - typing alone
-    // leaves the text unconfirmed; Enter is what turns it into an actual
-    // search chip. Without this, Naukri rejects the search as "too generic".
     const enterEventInit = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true };
-    keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
-    keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
-    await sleep(900);
+    const CHIP_CONFIRM_TRIES = 3;
 
-    if (!document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) {
+    for (let i = 1; i <= CHIP_CONFIRM_TRIES; i++) {
+      if (i === 1) {
+        await clearAllKeywordChips();
+        await sleep(150);
+      }
       setReactInputValue(keywordsInput, value);
+      // Give Naukri's suggestor dropdown time to actually load and register
+      // the typed value before Enter is sent - firing Enter too early can
+      // land before the field is ready to confirm anything into a chip.
       await sleep(500);
+
+      // This field is a chip/tag autocomplete (role="combobox") - typing
+      // alone leaves the text unconfirmed; Enter is what turns it into an
+      // actual search chip. Without this, Naukri rejects the search as
+      // "too generic".
       keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
       keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
       await sleep(900);
+
+      if (document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) return true;
     }
 
-    return Boolean(document.querySelector(CHIP_REMOVE_ICON_SELECTOR));
+    return false;
   }
 
   // Runs one full search attempt (type value, confirm chip, click Search,
