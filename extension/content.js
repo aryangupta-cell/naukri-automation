@@ -257,10 +257,17 @@
   }
 
   async function goToSearchPageIfNeeded() {
-    const onSearchPage = window.location.href.includes("activeTab=advSrch");
-    let keywordsInput = document.querySelector(KEYWORDS_SELECTOR);
+    // Naukri's v3 UI is a single-page app - opening a candidate profile
+    // (tabKey=profile) can leave the search page's Keywords field still
+    // technically present in the DOM underneath the profile view, so
+    // checking "does a Keywords input exist" alone isn't reliable. Treat
+    // any profile URL as needing a real navigation back, regardless of
+    // what querySelector still finds.
+    const url = window.location.href;
+    const onSearchPage = url.includes("activeTab=advSrch") && !url.includes("tabKey=profile");
+    let keywordsInput = onSearchPage ? document.querySelector(KEYWORDS_SELECTOR) : null;
 
-    if (!keywordsInput && !onSearchPage) {
+    if (!onSearchPage) {
       setStatus("Navigating to Search Resumes...");
       window.location.href = SEARCH_URL;
       return null; // the fresh page load re-runs this content script and retries
