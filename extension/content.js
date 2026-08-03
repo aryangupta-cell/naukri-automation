@@ -232,11 +232,13 @@
     if (!searchButton) return "no-search-button";
     searchButton.click();
 
-    // Pause after clicking before starting to watch for the outcome.
-    await randomDelay(2000, 5000);
-
+    // Start watching for the outcome immediately - the "No results found"
+    // banner is a transient toast that appears and auto-dismisses on its
+    // own, so a blind pause here before checking can miss it entirely if
+    // it shows up and disappears during that window. The 400ms poll
+    // interval itself provides enough natural pacing.
     const startUrl = window.location.href;
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 10000;
     let outcome = "timeout";
     while (Date.now() < deadline) {
       await sleep(400);
