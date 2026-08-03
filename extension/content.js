@@ -187,12 +187,12 @@
   // it after a retry (caller decides whether to try the whole cycle again).
   async function typeAndConfirmChip(keywordsInput, value) {
     await clearAllKeywordChips();
-    await sleep(200);
+    await sleep(150);
     setReactInputValue(keywordsInput, value);
     // Give Naukri's suggestor dropdown time to actually load and register
     // the typed value before Enter is sent - firing Enter too early can
     // land before the field is ready to confirm anything into a chip.
-    await sleep(900);
+    await sleep(500);
 
     // This field is a chip/tag autocomplete (role="combobox") - typing alone
     // leaves the text unconfirmed; Enter is what turns it into an actual
@@ -200,14 +200,14 @@
     const enterEventInit = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true };
     keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
     keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
-    await sleep(1200);
+    await sleep(900);
 
     if (!document.querySelector(CHIP_REMOVE_ICON_SELECTOR)) {
       setReactInputValue(keywordsInput, value);
-      await sleep(900);
+      await sleep(500);
       keywordsInput.dispatchEvent(new KeyboardEvent("keydown", enterEventInit));
       keywordsInput.dispatchEvent(new KeyboardEvent("keyup", enterEventInit));
-      await sleep(1200);
+      await sleep(900);
     }
 
     return Boolean(document.querySelector(CHIP_REMOVE_ICON_SELECTOR));
@@ -222,17 +222,17 @@
 
     // Pause before actually clicking Search, like a person glancing at the
     // confirmed chip before hitting the button.
-    await randomDelay(2000, 5000);
+    await randomDelay(500, 2000);
 
     const searchButton = document.querySelector(SEARCH_BUTTON_SELECTOR);
     if (!searchButton) return "no-search-button";
     searchButton.click();
 
     // Pause after clicking before starting to watch for the outcome.
-    await randomDelay(2000, 5000);
+    await randomDelay(500, 2000);
 
     const startUrl = window.location.href;
-    const deadline = Date.now() + 15000;
+    const deadline = Date.now() + 3000;
     let outcome = "timeout";
     while (Date.now() < deadline) {
       await sleep(400);
@@ -262,10 +262,9 @@
       return null; // the fresh page load re-runs this content script and retries
     }
 
-    // Pacing to avoid tripping Naukri's rate-limiting/CAPTCHA - widened from
-    // the spec's original 2-5s after still hitting CAPTCHAs during a full-sheet run.
-    setStatus("Waiting a few seconds before searching...");
-    await randomDelay(5000, 10000);
+    // Brief pacing pause before searching.
+    setStatus("Waiting a moment before searching...");
+    await randomDelay(500, 2000);
 
     if (!keywordsInput) {
       // Already on the search page, just still rendering - wait for it
@@ -280,38 +279,21 @@
     return keywordsInput;
   }
 
-  const DECOY_CHANNELS = new Set(["name", "department"]);
   const RETRY_CHANNELS = new Set(["phone", "email"]);
 
-  // Phone/email real searches get a random 3-7 total attempts when the
-  // search comes back ambiguous ("too generic" or a timeout) - Naukri
-  // appears to flag bare keyword-only searches as too generic fairly
-  // often, and retrying the identical search a few times before giving up
-  // recovers a chunk of those without needing a human to intervene every
-  // time.
+  // Phone/email searches get a random 1-2 total attempts when the search
+  // comes back ambiguous ("too generic" or a timeout) - a light safety net
+  // without the time cost of many retries.
   async function autoSearch(value, channel) {
     const keywordsInput = await goToSearchPageIfNeeded();
     if (!keywordsInput) return;
 
-    const isDecoy = DECOY_CHANNELS.has(channel);
-    const maxAttempts = RETRY_CHANNELS.has(channel) ? randomInt(3, 7) : 1;
+    const maxAttempts = RETRY_CHANNELS.has(channel) ? randomInt(1, 2) : 1;
 
     setStatus("Searching...");
     let outcome = "timeout";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       outcome = await runOneSearchAttempt(keywordsInput, value);
-
-      if (isDecoy) {
-        // Decoy searches exist purely to vary the query pattern - the
-        // outcome is irrelevant, always move on after one attempt.
-        // Pause as if actually glancing at the results before moving on.
-        await randomDelay(2000, 5000);
-        await clearAllKeywordChips();
-        setStatus("Decoy search done, moving on...");
-        await randomDelay(2000, 5000);
-        await submit({ status: "Done" });
-        return;
-      }
 
       if (outcome === "profile" || outcome === "no-results") break;
 
@@ -319,13 +301,13 @@
       if (attempt < maxAttempts) {
         setStatus(`Search was rejected/unclear (attempt ${attempt}/${maxAttempts}) - retrying...`);
         await clearAllKeywordChips();
-        await randomDelay(1000, 2000);
+        await randomDelay(200, 1000);
       }
     }
 
     if (outcome === "no-results") {
       setStatus('Naukri reported "No results found" - submitting Not Found.');
-      await randomDelay(2000, 5000);
+      await randomDelay(500, 2000);
       await submit({ status: "Not Found" });
       return;
     }
@@ -349,11 +331,11 @@
 
     // Pause before reading the profile panel, like a person actually
     // scanning the page rather than scraping it instantly.
-    await randomDelay(2000, 5000);
+    await randomDelay(500, 2000);
     const { modified, active } = extractModifiedActive();
     if (modified && active) {
       setStatus(`Auto-extracted: "${modified}" / "${active}". Submitting...`);
-      await randomDelay(2000, 5000);
+      await randomDelay(500, 2000);
       await submit({ status: "Completed", modified, active });
     } else {
       setStatus("Profile opened but couldn't auto-read Modified/Active - please fill them in manually below.");

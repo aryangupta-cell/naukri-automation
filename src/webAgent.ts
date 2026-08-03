@@ -13,7 +13,7 @@ import {
 } from "./google/jobs.js";
 import { RunLogger } from "./logging/logger.js";
 import { normalizeMobile } from "./domain/mobile.js";
-import type { CandidateResult, DecoyChannel, LinkedInResult, RunStage, SearchChannel, SheetRow } from "./domain/types.js";
+import type { CandidateResult, LinkedInResult, RunStage, SearchChannel, SheetRow } from "./domain/types.js";
 import { maskMobile } from "./utils/mask.js";
 import { sleep } from "./utils/sleep.js";
 import { resolveWithCache } from "./utils/cache.js";
@@ -35,12 +35,10 @@ const stop = installStopHandler();
 let currentRunId = "idle";
 let currentStage: RunStage = "IDLE";
 
-type Channel = SearchChannel | "linkedin" | DecoyChannel;
+type Channel = SearchChannel | "linkedin";
 /** The "Stop run" button can interrupt any channel, so every wait path can resolve with this. */
 type StoppedSignal = { status: "Stopped" };
-/** Decoy searches (name/department) only ever need an ack that the search happened - the result is never read. */
-type DecoyAck = { status: "Done" };
-type PendingResult = CandidateResult | LinkedInResult | DecoyAck | StoppedSignal;
+type PendingResult = CandidateResult | LinkedInResult | StoppedSignal;
 
 interface PendingPrompt {
   runId: string;
@@ -72,13 +70,6 @@ function waitForLinkedIn(runId: string, row: SheetRow): Promise<LinkedInResult |
       channel: "linkedin",
       resolve: resolve as (result: PendingResult) => void,
     };
-  });
-}
-
-/** Decoy search (name/department) - searched purely to break up the phone/email search pattern; result is discarded. */
-function waitForDecoy(runId: string, row: SheetRow, value: string, channel: DecoyChannel): Promise<DecoyAck | StoppedSignal> {
-  return new Promise((resolve) => {
-    pending = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve: resolve as (result: PendingResult) => void };
   });
 }
 
@@ -144,11 +135,6 @@ const PAGE_HTML = `<!doctype html>
     <button class="primary" onclick="submitResult('Yes')">Yes</button>
     <button onclick="submitResult('No')">No</button>
   </div>
-
-  <div id="decoyButtons" style="display:none">
-    <p>Decoy search (result not used) - search this in Resdex, then just click Done to move on:</p>
-    <button class="primary" onclick="submitResult('Done')">Done</button>
-  </div>
 </div>
 <script>
 let lastMobile = null;
@@ -199,10 +185,8 @@ async function poll() {
       document.getElementById('mobile').textContent = state.pending.value;
       document.getElementById('channel').textContent = state.pending.channel;
       const isLinkedin = state.pending.channel === 'linkedin';
-      const isDecoy = state.pending.channel === 'name' || state.pending.channel === 'department';
-      document.getElementById('naukriButtons').style.display = (!isLinkedin && !isDecoy) ? 'block' : 'none';
+      document.getElementById('naukriButtons').style.display = isLinkedin ? 'none' : 'block';
       document.getElementById('linkedinButtons').style.display = isLinkedin ? 'block' : 'none';
-      document.getElementById('decoyButtons').style.display = isDecoy ? 'block' : 'none';
       lastMobile = state.pending.value;
     }
   } else {
@@ -289,8 +273,6 @@ function startServer(): void {
             resolve({ status: "Stopped" });
           } else if (channel === "linkedin") {
             resolve({ status: status === "Yes" ? "Yes" : "No" });
-          } else if (channel === "name" || channel === "department") {
-            resolve({ status: "Done" });
           } else {
             const result: CandidateResult =
               status === "Completed"
@@ -346,16 +328,6 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 
       currentStage = "PROCESSING_ROW";
 
-      // Decoy name search - purely to vary the query pattern before the phone
-      // search; result is never read or written anywhere.
-      if (row.name.trim() !== "") {
-        const result = await waitForDecoy(runId, row, row.name, "name");
-        if (result.status === "Stopped") {
-          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (name decoy).`, { level: "WARN" });
-          break rowLoop;
-        }
-      }
-
       // Phone lookup (columns D:F) - only if a mobile number is present.
       if (row.mobileRaw.trim() !== "") {
         await writeChannelResult(row.rowNumber, "phone", { status: "Processing" });
@@ -391,16 +363,6 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
             `Row ${row.rowNumber} phone (${maskMobile(digits10)}) -> ${result.status}${fromCache ? " (cached)" : ""}.`,
             { candidateRow: row.rowNumber, candidateName: row.name },
           );
-        }
-      }
-
-      // Decoy department search - purely to vary the query pattern between
-      // the phone and email searches; result is never read or written anywhere.
-      if (row.department.trim() !== "") {
-        const result = await waitForDecoy(runId, row, row.department, "department");
-        if (result.status === "Stopped") {
-          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (department decoy).`, { level: "WARN" });
-          break rowLoop;
         }
       }
 

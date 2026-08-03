@@ -83,7 +83,7 @@
       setStatus("Navigating to profile...");
       // Pause before navigating, like a person about to click a link
       // rather than jumping straight there.
-      await randomDelay(2000, 5000);
+      await randomDelay(500, 2000);
       window.location.href = url;
       return; // fresh page load re-runs this content script and retries
     }
@@ -91,13 +91,13 @@
     // Pause after the page has loaded before scanning it, like a person
     // actually reading the profile rather than scraping it instantly.
     setStatus("Checking for Open to Work...");
-    await randomDelay(2000, 5000);
+    await randomDelay(500, 2000);
 
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
       if (isOpenToWork()) {
         setStatus('Found "Open to work" - submitting Yes.');
-        await randomDelay(2000, 5000);
+        await randomDelay(500, 2000);
         await submit({ status: "Yes" });
         return;
       }
@@ -105,7 +105,7 @@
     }
 
     setStatus('"Open to work" not found - submitting No.');
-    await randomDelay(2000, 5000);
+    await randomDelay(500, 2000);
     await submit({ status: "No" });
   }
 
