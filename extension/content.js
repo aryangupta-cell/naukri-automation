@@ -228,6 +228,14 @@
     // confirmed chip before hitting the button.
     await randomDelay(2000, 5000);
 
+    // Toast banners ("No results found"/"too generic") stack and linger
+    // rather than clearing between attempts - snapshot whether each one is
+    // already present *before* this click, so a stale leftover from a
+    // previous attempt can't be misread as this attempt's result. Only a
+    // pattern that becomes newly true after clicking counts.
+    const hadNoResultsBefore = /no results found for this search/i.test(document.body.textContent);
+    const hadTooGenericBefore = /too generic/i.test(document.body.textContent);
+
     const searchButton = document.querySelector(SEARCH_BUTTON_SELECTOR);
     if (!searchButton) return "no-search-button";
     searchButton.click();
@@ -246,11 +254,13 @@
         outcome = "profile";
         break;
       }
-      if (/no results found for this search/i.test(document.body.textContent)) {
+      const hasNoResultsNow = /no results found for this search/i.test(document.body.textContent);
+      if (hasNoResultsNow && !hadNoResultsBefore) {
         outcome = "no-results";
         break;
       }
-      if (/too generic/i.test(document.body.textContent)) {
+      const hasTooGenericNow = /too generic/i.test(document.body.textContent);
+      if (hasTooGenericNow && !hadTooGenericBefore) {
         outcome = "too-generic";
         break;
       }
