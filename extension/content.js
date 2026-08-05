@@ -397,29 +397,24 @@
     const idleEl = document.getElementById("nap-idle");
     const cardEl = document.getElementById("nap-card");
 
-    if (state.pending && state.pending.channel === "linkedin") {
-      // This candidate's LinkedIn step is being handled on a linkedin.com tab, not here.
-      cardEl.style.display = "none";
-      lastKey = null;
-      lastValue = null;
-      autoAttemptedKey = null;
-      idleEl.style.display = "block";
-      idleEl.textContent = `Waiting for the LinkedIn check on row ${state.pending.rowNumber} to finish...`;
-    } else if (state.pending) {
-      const key = `${state.pending.rowNumber}:${state.pending.channel}:${state.pending.value}`;
+    // The LinkedIn side runs independently now (its own pendingLinkedin slot,
+    // handled by linkedin.js on a linkedin.com tab) - this panel only ever
+    // needs to look at pendingNaukri.
+    if (state.pendingNaukri) {
+      const p = state.pendingNaukri;
+      const key = `${p.rowNumber}:${p.channel}:${p.value}`;
       idleEl.style.display = "none";
       cardEl.style.display = "block";
       if (key !== lastKey) {
-        document.getElementById("nap-row").textContent =
-          `Row ${state.pending.rowNumber}: ${state.pending.name} (${state.pending.channel})`;
-        document.getElementById("nap-mobile").textContent = state.pending.value;
-        lastValue = state.pending.value;
+        document.getElementById("nap-row").textContent = `Row ${p.rowNumber}: ${p.name} (${p.channel})`;
+        document.getElementById("nap-mobile").textContent = p.value;
+        lastValue = p.value;
         lastKey = key;
         setStatus("");
       }
       if (autoAttemptedKey !== key) {
         autoAttemptedKey = key;
-        autoSearch(state.pending.value, state.pending.channel);
+        autoSearch(p.value, p.channel);
       }
     } else {
       cardEl.style.display = "none";

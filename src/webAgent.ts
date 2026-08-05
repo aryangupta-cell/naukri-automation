@@ -25,8 +25,10 @@ import { installStopHandler, tally, summarize, finishRun, startHeartbeatTicker }
  * Execution Log, row read/write, dedupe cache) - only the "ask a person for
  * the Resdex result" step changes, from readline to a browser page.
  *
- * Each row is looked up twice: once by phone (columns D:F), once by email
- * (columns G:I), in that order, before moving to the next row.
+ * Per row, the Naukri sequence (name decoy -> phone -> department decoy ->
+ * email) and the LinkedIn "Open to Work" check run concurrently, since
+ * LinkedIn doesn't depend on the Naukri results at all - see
+ * processNaukriSequence/processLinkedIn below.
  */
 
 const PORT = Number(process.env.WEB_PORT) || 4545;
@@ -53,18 +55,25 @@ interface PendingState extends PendingPrompt {
   resolve: (result: PendingResult) => void;
 }
 
-let pending: PendingState | null = null;
+// Two independent pending slots instead of one shared one, so the Resdex
+// side (phone/email/decoys) and the LinkedIn side can each have their own
+// candidate in flight at the same time - the extension's two content
+// scripts (content.js on resdex.naukri.com, linkedin.js on linkedin.com)
+// poll and resolve these independently, letting a row's Naukri sequence
+// and LinkedIn check run concurrently instead of one waiting on the other.
+let pendingNaukri: PendingState | null = null;
+let pendingLinkedin: PendingState | null = null;
 let lastRunSummary: string | null = null;
 
 function waitForHuman(runId: string, row: SheetRow, value: string, channel: SearchChannel): Promise<CandidateResult> {
   return new Promise((resolve) => {
-    pending = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve: resolve as (result: PendingResult) => void };
+    pendingNaukri = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve: resolve as (result: PendingResult) => void };
   });
 }
 
 function waitForLinkedIn(runId: string, row: SheetRow): Promise<LinkedInResult | StoppedSignal> {
   return new Promise((resolve) => {
-    pending = {
+    pendingLinkedin = {
       runId,
       rowNumber: row.rowNumber,
       name: row.name,
@@ -78,14 +87,16 @@ function waitForLinkedIn(runId: string, row: SheetRow): Promise<LinkedInResult |
 /** Decoy search (name/department) - searched purely to break up the phone/email search pattern; result is discarded. */
 function waitForDecoy(runId: string, row: SheetRow, value: string, channel: DecoyChannel): Promise<DecoyAck | StoppedSignal> {
   return new Promise((resolve) => {
-    pending = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve: resolve as (result: PendingResult) => void };
+    pendingNaukri = { runId, rowNumber: row.rowNumber, name: row.name, value, channel, resolve: resolve as (result: PendingResult) => void };
   });
 }
 
 function currentStateJson(): string {
-  const p = pending;
+  const pn = pendingNaukri;
+  const pl = pendingLinkedin;
   return JSON.stringify({
-    pending: p ? { rowNumber: p.rowNumber, name: p.name, value: p.value, channel: p.channel } : null,
+    pendingNaukri: pn ? { rowNumber: pn.rowNumber, name: pn.name, value: pn.value, channel: pn.channel } : null,
+    pendingLinkedin: pl ? { rowNumber: pl.rowNumber, name: pl.name, value: pl.value, channel: pl.channel } : null,
     idle: currentRunId === "idle",
     lastRunSummary,
   });
@@ -158,7 +169,8 @@ function showCompleted() {
 }
 
 async function submitResult(status) {
-  await fetch('/api/submit', {
+  const endpoint = currentTarget === 'linkedin' ? '/api/submit-linkedin' : '/api/submit';
+  await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
@@ -182,6 +194,8 @@ async function submitCompleted() {
   poll();
 }
 
+let currentTarget = 'naukri';
+
 async function poll() {
   const res = await fetch('/api/state');
   const state = await res.json();
@@ -189,21 +203,28 @@ async function poll() {
   const doneEl = document.getElementById('done');
   const cardEl = document.getElementById('card');
 
-  if (state.pending) {
+  // This plain fallback page only shows one card at a time - prefer the
+  // Naukri side (more common) and fall back to LinkedIn if that's the
+  // only thing pending. The extension is what actually handles both
+  // concurrently; this page is the no-extension manual fallback.
+  const pending = state.pendingNaukri || state.pendingLinkedin;
+  currentTarget = state.pendingNaukri ? 'naukri' : 'linkedin';
+
+  if (pending) {
     idleEl.style.display = 'none';
     doneEl.style.display = 'none';
     cardEl.classList.add('show');
-    if (state.pending.value !== lastMobile) {
-      document.getElementById('rowNumber').textContent = state.pending.rowNumber;
-      document.getElementById('name').textContent = state.pending.name;
-      document.getElementById('mobile').textContent = state.pending.value;
-      document.getElementById('channel').textContent = state.pending.channel;
-      const isLinkedin = state.pending.channel === 'linkedin';
-      const isDecoy = state.pending.channel === 'name' || state.pending.channel === 'department';
+    if (pending.value !== lastMobile) {
+      document.getElementById('rowNumber').textContent = pending.rowNumber;
+      document.getElementById('name').textContent = pending.name;
+      document.getElementById('mobile').textContent = pending.value;
+      document.getElementById('channel').textContent = pending.channel;
+      const isLinkedin = pending.channel === 'linkedin';
+      const isDecoy = pending.channel === 'name' || pending.channel === 'department';
       document.getElementById('naukriButtons').style.display = (!isLinkedin && !isDecoy) ? 'block' : 'none';
       document.getElementById('linkedinButtons').style.display = isLinkedin ? 'block' : 'none';
       document.getElementById('decoyButtons').style.display = isDecoy ? 'block' : 'none';
-      lastMobile = state.pending.value;
+      lastMobile = pending.value;
     }
   } else {
     cardEl.classList.remove('show');
@@ -275,20 +296,18 @@ function startServer(): void {
     if (req.method === "POST" && req.url === "/api/submit") {
       readJsonBody(req)
         .then((body) => {
-          if (!pending) {
+          if (!pendingNaukri) {
             res.writeHead(409, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "No pending candidate." }));
+            res.end(JSON.stringify({ error: "No pending Naukri candidate." }));
             return;
           }
           const status = String(body.status ?? "");
-          const resolve = pending.resolve;
-          const channel = pending.channel;
-          pending = null;
+          const resolve = pendingNaukri.resolve;
+          const channel = pendingNaukri.channel;
+          pendingNaukri = null;
 
           if (status === "Stopped") {
             resolve({ status: "Stopped" });
-          } else if (channel === "linkedin") {
-            resolve({ status: status === "Yes" ? "Yes" : "No" });
           } else if (channel === "name" || channel === "department") {
             resolve({ status: "Done" });
           } else {
@@ -307,6 +326,32 @@ function startServer(): void {
         });
       return;
     }
+    if (req.method === "POST" && req.url === "/api/submit-linkedin") {
+      readJsonBody(req)
+        .then((body) => {
+          if (!pendingLinkedin) {
+            res.writeHead(409, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "No pending LinkedIn candidate." }));
+            return;
+          }
+          const status = String(body.status ?? "");
+          const resolve = pendingLinkedin.resolve;
+          pendingLinkedin = null;
+
+          if (status === "Stopped") {
+            resolve({ status: "Stopped" });
+          } else {
+            resolve({ status: status === "Yes" ? "Yes" : "No" });
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        })
+        .catch(() => {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Bad request." }));
+        });
+      return;
+    }
     res.writeHead(404);
     res.end("Not found");
   });
@@ -314,6 +359,133 @@ function startServer(): void {
   server.listen(PORT, () => {
     console.log(`Candidate lookup page: http://localhost:${PORT}`);
   });
+}
+
+interface StepOutcome {
+  stopped: boolean;
+  processed: number;
+}
+
+/** Runs the full Name(decoy) -> Phone -> Department(decoy) -> Email sequence for one row on the Resdex side. */
+async function processNaukriSequence(
+  runId: string,
+  row: SheetRow,
+  phoneCache: Map<string, CandidateResult>,
+  emailCache: Map<string, CandidateResult>,
+  counts: Record<string, number>,
+  logger: RunLogger,
+): Promise<StepOutcome> {
+  let processed = 0;
+
+  // Decoy name search - purely to vary the query pattern before the phone
+  // search; result is never read or written anywhere.
+  if (row.name.trim() !== "") {
+    const result = await waitForDecoy(runId, row, row.name, "name");
+    if (result.status === "Stopped") {
+      await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (name decoy).`, { level: "WARN" });
+      return { stopped: true, processed };
+    }
+  }
+
+  // Phone lookup (columns D:F) - only if a mobile number is present.
+  if (row.mobileRaw.trim() !== "") {
+    await writeChannelResult(row.rowNumber, "phone", { status: "Processing" });
+    const normalized = normalizeMobile(row.mobileRaw);
+
+    if (!normalized.valid || !normalized.digits10) {
+      const result: CandidateResult = { status: "Invalid Mobile" };
+      await writeChannelResult(row.rowNumber, "phone", result);
+      await logger.event("PROCESSING_ROW", `Invalid mobile (${normalized.reason}).`, {
+        level: "WARN",
+        candidateRow: row.rowNumber,
+        candidateName: row.name,
+      });
+      tally(counts, result.status);
+      processed++;
+    } else {
+      const digits10 = normalized.digits10;
+      const { value: result, fromCache } = await resolveWithCache(phoneCache, digits10, (d) =>
+        waitForHuman(runId, row, d, "phone"),
+      );
+
+      if (result.status === "Stopped") {
+        await writeChannelResult(row.rowNumber, "phone", result);
+        await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (phone).`, { level: "WARN" });
+        return { stopped: true, processed };
+      }
+
+      await writeChannelResult(row.rowNumber, "phone", result);
+      tally(counts, result.status);
+      processed++;
+      await logger.event(
+        "PROCESSING_ROW",
+        `Row ${row.rowNumber} phone (${maskMobile(digits10)}) -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+        { candidateRow: row.rowNumber, candidateName: row.name },
+      );
+    }
+  }
+
+  // Decoy department search - purely to vary the query pattern between
+  // the phone and email searches; result is never read or written anywhere.
+  if (row.department.trim() !== "") {
+    const result = await waitForDecoy(runId, row, row.department, "department");
+    if (result.status === "Stopped") {
+      await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (department decoy).`, { level: "WARN" });
+      return { stopped: true, processed };
+    }
+  }
+
+  // Email lookup (columns G:I) - only if an email is present.
+  if (row.email.trim() !== "") {
+    await writeChannelResult(row.rowNumber, "email", { status: "Processing" });
+    const emailKey = row.email.toLowerCase();
+    const { value: result, fromCache } = await resolveWithCache(emailCache, emailKey, () =>
+      waitForHuman(runId, row, row.email, "email"),
+    );
+
+    if (result.status === "Stopped") {
+      await writeChannelResult(row.rowNumber, "email", result);
+      await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (email).`, { level: "WARN" });
+      return { stopped: true, processed };
+    }
+
+    await writeChannelResult(row.rowNumber, "email", result);
+    tally(counts, result.status);
+    processed++;
+    await logger.event(
+      "PROCESSING_ROW",
+      `Row ${row.rowNumber} email -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+      { candidateRow: row.rowNumber, candidateName: row.name },
+    );
+  }
+
+  return { stopped: false, processed };
+}
+
+/** Runs the LinkedIn "Open to Work" check for one row - independent of the Naukri sequence, so it can run concurrently with it. */
+async function processLinkedIn(
+  runId: string,
+  row: SheetRow,
+  linkedinCache: Map<string, LinkedInResult | StoppedSignal>,
+  logger: RunLogger,
+): Promise<StepOutcome> {
+  if (row.linkedinUrl.trim() === "") return { stopped: false, processed: 0 };
+
+  const linkedinKey = row.linkedinUrl.toLowerCase();
+  const { value: result, fromCache } = await resolveWithCache(linkedinCache, linkedinKey, () => waitForLinkedIn(runId, row));
+
+  if (result.status === "Stopped") {
+    await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (linkedin).`, { level: "WARN" });
+    return { stopped: true, processed: 0 };
+  }
+
+  await writeLinkedInResult(row.rowNumber, result);
+  await logger.event(
+    "PROCESSING_ROW",
+    `Row ${row.rowNumber} linkedin -> ${result.status}${fromCache ? " (cached)" : ""}.`,
+    { candidateRow: row.rowNumber, candidateName: row.name },
+  );
+  return { stopped: false, processed: 1 };
 }
 
 async function runOnce(control: Sheet1ControlState): Promise<void> {
@@ -346,105 +518,19 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
 
       currentStage = "PROCESSING_ROW";
 
-      // Decoy name search - purely to vary the query pattern before the phone
-      // search; result is never read or written anywhere.
-      if (row.name.trim() !== "") {
-        const result = await waitForDecoy(runId, row, row.name, "name");
-        if (result.status === "Stopped") {
-          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (name decoy).`, { level: "WARN" });
-          break rowLoop;
-        }
-      }
+      // Naukri (name decoy -> phone -> department decoy -> email) and
+      // LinkedIn are independent of each other, so run them concurrently
+      // instead of LinkedIn waiting for the whole Naukri sequence to
+      // finish first (or vice versa) - halves the wall-clock time per row.
+      const [naukriOutcome, linkedinOutcome] = await Promise.all([
+        processNaukriSequence(runId, row, phoneCache, emailCache, counts, logger),
+        processLinkedIn(runId, row, linkedinCache, logger),
+      ]);
 
-      // Phone lookup (columns D:F) - only if a mobile number is present.
-      if (row.mobileRaw.trim() !== "") {
-        await writeChannelResult(row.rowNumber, "phone", { status: "Processing" });
-        const normalized = normalizeMobile(row.mobileRaw);
+      processed += naukriOutcome.processed + linkedinOutcome.processed;
 
-        if (!normalized.valid || !normalized.digits10) {
-          const result: CandidateResult = { status: "Invalid Mobile" };
-          await writeChannelResult(row.rowNumber, "phone", result);
-          await logger.event("PROCESSING_ROW", `Invalid mobile (${normalized.reason}).`, {
-            level: "WARN",
-            candidateRow: row.rowNumber,
-            candidateName: row.name,
-          });
-          tally(counts, result.status);
-          processed++;
-        } else {
-          const digits10 = normalized.digits10;
-          const { value: result, fromCache } = await resolveWithCache(phoneCache, digits10, (d) =>
-            waitForHuman(runId, row, d, "phone"),
-          );
-
-          if (result.status === "Stopped") {
-            await writeChannelResult(row.rowNumber, "phone", result);
-            await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (phone).`, { level: "WARN" });
-            break rowLoop;
-          }
-
-          await writeChannelResult(row.rowNumber, "phone", result);
-          tally(counts, result.status);
-          processed++;
-          await logger.event(
-            "PROCESSING_ROW",
-            `Row ${row.rowNumber} phone (${maskMobile(digits10)}) -> ${result.status}${fromCache ? " (cached)" : ""}.`,
-            { candidateRow: row.rowNumber, candidateName: row.name },
-          );
-        }
-      }
-
-      // Decoy department search - purely to vary the query pattern between
-      // the phone and email searches; result is never read or written anywhere.
-      if (row.department.trim() !== "") {
-        const result = await waitForDecoy(runId, row, row.department, "department");
-        if (result.status === "Stopped") {
-          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (department decoy).`, { level: "WARN" });
-          break rowLoop;
-        }
-      }
-
-      // Email lookup (columns G:I) - only if an email is present.
-      if (row.email.trim() !== "") {
-        await writeChannelResult(row.rowNumber, "email", { status: "Processing" });
-        const emailKey = row.email.toLowerCase();
-        const { value: result, fromCache } = await resolveWithCache(emailCache, emailKey, () =>
-          waitForHuman(runId, row, row.email, "email"),
-        );
-
-        if (result.status === "Stopped") {
-          await writeChannelResult(row.rowNumber, "email", result);
-          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (email).`, { level: "WARN" });
-          break rowLoop;
-        }
-
-        await writeChannelResult(row.rowNumber, "email", result);
-        tally(counts, result.status);
-        processed++;
-        await logger.event(
-          "PROCESSING_ROW",
-          `Row ${row.rowNumber} email -> ${result.status}${fromCache ? " (cached)" : ""}.`,
-          { candidateRow: row.rowNumber, candidateName: row.name },
-        );
-      }
-
-      // LinkedIn "Open to Work" check (column K) - only if a LinkedIn URL is present.
-      if (row.linkedinUrl.trim() !== "") {
-        const linkedinKey = row.linkedinUrl.toLowerCase();
-        const { value: result, fromCache } = await resolveWithCache(linkedinCache, linkedinKey, () => waitForLinkedIn(runId, row));
-
-        if (result.status === "Stopped") {
-          await logger.event("STOPPED", `Operator stopped at row ${row.rowNumber} (linkedin).`, { level: "WARN" });
-          break rowLoop;
-        }
-
-        await writeLinkedInResult(row.rowNumber, result);
-        processed++;
-        await logger.event(
-          "PROCESSING_ROW",
-          `Row ${row.rowNumber} linkedin -> ${result.status}${fromCache ? " (cached)" : ""}.`,
-          { candidateRow: row.rowNumber, candidateName: row.name },
-        );
+      if (naukriOutcome.stopped || linkedinOutcome.stopped) {
+        break rowLoop;
       }
     }
 
@@ -463,7 +549,8 @@ async function runOnce(control: Sheet1ControlState): Promise<void> {
     await logger.event("FAILED", `Run failed: ${message}`, { level: "ERROR" });
     await finishRun(runId, "Failed", message, stop);
   } finally {
-    pending = null;
+    pendingNaukri = null;
+    pendingLinkedin = null;
     currentRunId = "idle";
     currentStage = "IDLE";
   }

@@ -50,7 +50,7 @@
   async function submit(body) {
     setStatus("");
     try {
-      await fetch(`${API_BASE}/api/submit`, {
+      await fetch(`${API_BASE}/api/submit-linkedin`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -124,30 +124,31 @@
     const idleEl = document.getElementById("nap-idle");
     const cardEl = document.getElementById("nap-card");
 
-    if (state.pending && state.pending.channel === "linkedin") {
+    // Runs independently of the Naukri (Resdex) side now - each has its own
+    // pending slot, so this never waits for a Naukri step to finish first.
+    if (state.pendingLinkedin) {
+      const p = state.pendingLinkedin;
       idleEl.style.display = "none";
       cardEl.style.display = "block";
-      if (state.pending.value !== lastValue) {
-        document.getElementById("nap-row").textContent = `Row ${state.pending.rowNumber}: ${state.pending.name}`;
-        lastValue = state.pending.value;
+      if (p.value !== lastValue) {
+        document.getElementById("nap-row").textContent = `Row ${p.rowNumber}: ${p.name}`;
+        lastValue = p.value;
         setStatus("");
       }
-      if (autoAttemptedValue !== state.pending.value) {
-        autoAttemptedValue = state.pending.value;
-        autoCheck(state.pending.value);
+      if (autoAttemptedValue !== p.value) {
+        autoAttemptedValue = p.value;
+        autoCheck(p.value);
       }
     } else {
       cardEl.style.display = "none";
       lastValue = null;
       autoAttemptedValue = null;
       idleEl.style.display = "block";
-      idleEl.textContent = state.pending
-        ? "Waiting for the current Naukri step to finish..."
-        : state.idle
-          ? state.lastRunSummary
-            ? `Last run: ${state.lastRunSummary}`
-            : "Waiting for a run to be triggered (tick X1)..."
-          : "Run in progress, waiting for the next LinkedIn check...";
+      idleEl.textContent = state.idle
+        ? state.lastRunSummary
+          ? `Last run: ${state.lastRunSummary}`
+          : "Waiting for a run to be triggered (tick X1)..."
+        : "Run in progress, waiting for the next LinkedIn check...";
     }
   }
 
